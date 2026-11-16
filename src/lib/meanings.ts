@@ -187,7 +187,7 @@ export function pickMeaning(scores: number[], text: string, threshold: number): 
   const order = scores.map((s, i) => [s, i] as const).sort((a, b) => b[0] - a[0]);
   const way = wayOfText(text);
   const ok = (i: number) => !way || wayOfMeaning(MEANINGS[i][1]) === way;
-  const same = order.find(([s, i]) => s >= threshold && ok(i) && wayOfMeaning(MEANINGS[i][1]));
+  const same = way ? order.find(([s, i]) => s >= threshold && wayOfMeaning(MEANINGS[i][1]) === way) : undefined;
   if (same) return same[1];
   const any = order.find(([s, i]) => s >= threshold && ok(i));
   return any ? any[1] : -1;
