@@ -117,7 +117,29 @@ export async function binanceAssets(): Promise<Asset[]> {
 // ---------------------------------------------------------------------------------------------------------------
 // Yahoo Finance
 
-const YH = 'https://query1.finance.yahoo.com';
+const YAHOO_HOSTS = ['https://query1.finance.yahoo.com', 'https://query2.finance.yahoo.com'];
+// Yahoo turns away requests that don't look like a browser (the Android default answers 429), so the app sends a browser's headers.
+const YAHOO_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Tries both Yahoo hosts, and once more after a pause if Yahoo is rate-limiting. */
+async function yahooGet<T>(path: string): Promise<T> {
+  let last: unknown;
+  for (const pause of [0, 1500]) {
+    if (pause) await wait(pause);
+    for (const host of YAHOO_HOSTS) {
+      try {
+        return await getJson<T>(host + path, { headers: YAHOO_HEADERS });
+      } catch (err) {
+        last = err;
+      }
+    }
+  }
+  throw last;
+}
 interface YChart {
   chart: {
     result: {
@@ -139,7 +161,7 @@ async function yahooLive(symbol: string, tf: Timeframe): Promise<Candle[]> {
     '1w': ['1wk', 'max'],
   };
   const [interval, range] = native[tf];
-  const body = await getJson<YChart>(`${YH}/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}&includePrePost=false&events=div%2Csplits`);
+  const body = await yahooGet<YChart>(`/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}&includePrePost=false&events=div%2Csplits`);
   const r = body.chart.result?.[0];
   if (!r?.timestamp?.length) throw new DataError(body.chart.error?.description ?? `Yahoo Finance has no data for ${symbol}.`);
   const q = r.indicators.quote[0];
@@ -157,7 +179,9 @@ type SnapRow = [number, number, number, number, number, number];
 async function yahooSnapshot(symbol: string, tf: Timeframe): Promise<{ candles: Candle[]; updated: string }> {
   const file = tf === '1h' || tf === '4h' ? '1h' : '1d';
   const safe = symbol.replace(/[^A-Za-z0-9.=-]/g, '_');
-  const body = await getJson<{ updated: string; rows: SnapRow[] }>(`${import.meta.env.BASE_URL}data/markets/${safe}-${file}.json`);
+  // The app has no copy of the snapshot inside it, so it reads the one published with the website.
+  const base = isNative() ? 'https://neomaverick1.github.io/edgelab/' : import.meta.env.BASE_URL;
+  const body = await getJson<{ updated: string; rows: SnapRow[] }>(`${base}data/markets/${safe}-${file}.json`);
   let candles = body.rows.map(([time, open, high, low, close, volume]) => ({ time, open, high, low, close, volume }));
   if (tf === '4h') candles = resample(candles, 14_400, 3600);
   if (tf === '1w') candles = resample(candles, 604_800, 86_400);
@@ -172,7 +196,7 @@ export interface YahooHit {
   exchDisp?: string;
 }
 export async function yahooSearch(q: string): Promise<Asset[]> {
-  const body = await getJson<{ quotes: YahooHit[] }>(`https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=12&newsCount=0&listsCount=0`);
+  const body = await yahooGet<{ quotes: YahooHit[] }>(`/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=12&newsCount=0&listsCount=0`);
   return (body.quotes ?? [])
     .filter((h) => h.symbol && h.quoteType !== 'OPTION')
     .map((h) => yahooAsset(h.symbol, h.longname ?? h.shortname ?? h.symbol, kindOf(h.quoteType, h.symbol)));
@@ -230,7 +254,16 @@ export async function loadSeries(asset: Asset, tf: Timeframe, opts: { refresh?: 
   } else if (asset.source === 'binance') {
     series = { asset, tf, candles: await binance(asset.symbol, tf), granularity: seconds(tf), live: true, loadedAt: Date.now() };
   } else if (isNative()) {
-    series = { asset, tf, candles: await yahooLive(asset.symbol, tf), granularity: seconds(tf), live: true, loadedAt: Date.now() };
+    try {
+      series = { asset, tf, candles: await yahooLive(asset.symbol, tf), granularity: seconds(tf), live: true, loadedAt: Date.now() };
+    } catch (err) {
+      // Yahoo busy or unreachable: use the daily snapshot of the 200 bundled markets when this is one of them.
+      if (!['1h', '4h', '1d', '1w'].includes(tf)) throw err;
+      const { candles, updated } = await yahooSnapshot(asset.symbol, tf).catch(() => {
+        throw err;
+      });
+      series = { asset, tf, candles, granularity: seconds(tf), live: false, note: `Yahoo busy; snapshot from ${updated.slice(0, 10)}`, loadedAt: Date.now() };
+    }
   } else {
     if (!timeframesFor(asset).includes(tf)) throw new DataError(`On the web, ${asset.display} has hourly, 4-hour, daily and weekly bars. The Android app has every timeframe live.`);
     try {

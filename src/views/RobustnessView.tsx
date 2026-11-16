@@ -10,7 +10,8 @@ import { THEME } from '../components/charts';
 import { date, pct, ratio } from '../lib/format';
 import { OBJECTIVES, type Objective } from '../lib/metrics';
 import { axisValues, grade, percentile, type GridResult, type MonteCarlo, type WalkForward } from '../lib/robustness';
-import { applyValues, tunables, type Strategy, type Tunable } from '../lib/rules';
+import { applyValues, tunables, type Strategy } from '../lib/rules';
+import { defaultAxis, type AxisCfg } from '../components/axes';
 
 interface Props {
   strategy: Strategy;
@@ -18,20 +19,6 @@ interface Props {
   onApply: (s: Strategy) => void;
 }
 
-interface AxisCfg {
-  id: string;
-  min: number;
-  max: number;
-  steps: number;
-}
-
-const defaultAxis = (t: Tunable): AxisCfg => {
-  const span = Math.max(t.step * 4, Math.abs(t.value) * 0.6);
-  const snap = (v: number) => +(Math.round(v / t.step) * t.step).toFixed(4);
-  const min = Math.max(t.min, snap(t.value - span));
-  const max = Math.min(t.max, snap(t.value + span));
-  return { id: t.id, min, max, steps: 9 };
-};
 
 export function RobustnessView({ strategy, run, onApply }: Props) {
   const tun = useMemo(() => tunables(strategy), [strategy]);
@@ -268,7 +255,7 @@ export function RobustnessView({ strategy, run, onApply }: Props) {
   );
 }
 
-function GridView({ g, colorBy, setColorBy, onApply }: { g: GridResult; colorBy: 'score' | 'holdout'; setColorBy: (v: 'score' | 'holdout') => void; onApply: (vals: number[]) => void }) {
+export function GridView({ g, colorBy, setColorBy, onApply }: { g: GridResult; colorBy: 'score' | 'holdout'; setColorBy: (v: 'score' | 'holdout') => void; onApply: (vals: number[]) => void }) {
   const two = g.axes.length === 2;
   const xs = g.axes[0].values;
   const ys = two ? g.axes[1].values : [0];

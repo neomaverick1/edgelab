@@ -5,6 +5,7 @@ import { AssetIcon, AssetPicker } from './components/AssetPicker';
 import { Builder } from './components/Builder';
 import { GetApp } from './components/GetApp';
 import { createSync } from './components/charts';
+import { Optimizer } from './components/Optimizer';
 import { PriceChart, type PriceChartHandle } from './components/PriceChart';
 import { ExitBreakdown, Hero, MonthlyTable, StatsList, TradesTable, type RunResult } from './components/Results';
 import { Panel, Seg, Toaster, Toggle } from './components/ui';
@@ -56,7 +57,7 @@ export default function App() {
   const [view, setView] = useState<View>('backtest');
   const [picker, setPicker] = useState(false);
   const [log, setLog] = useState(false);
-  const [tab, setTab] = useState<'trades' | 'monthly' | 'stats' | 'exits' | 'words'>('trades');
+  const [tab, setTab] = useState<'trades' | 'monthly' | 'optimizer' | 'stats' | 'exits' | 'words'>('trades');
   const chartRef = useRef<PriceChartHandle>(null);
   const sync = useMemo(() => createSync(), []);
 
@@ -268,6 +269,7 @@ export default function App() {
                       [
                         ['trades', `Trades (${run.bt.trades.length})`],
                         ['monthly', 'Monthly returns'],
+                        ['optimizer', 'Optimizer'],
                         ['stats', 'All statistics'],
                         ['exits', 'How trades ended'],
                         ['words', 'Rules in words'],
@@ -281,6 +283,7 @@ export default function App() {
                   <div className="panel-body">
                     {tab === 'trades' ? <TradesTable trades={run.bt.trades} granularity={run.granularity} onPick={(t) => chartRef.current?.focus(t.entryTime, t.exitTime)} /> : null}
                     {tab === 'monthly' ? <MonthlyTable r={run} /> : null}
+                    {tab === 'optimizer' ? <Optimizer strategy={strategy} run={run} onApply={setStrategy} /> : null}
                     {tab === 'stats' ? <StatsList st={run.stats} /> : null}
                     {tab === 'exits' ? <ExitBreakdown st={run.stats} /> : null}
                     {tab === 'words' ? <p className="prose">{describe(strategy)}</p> : null}

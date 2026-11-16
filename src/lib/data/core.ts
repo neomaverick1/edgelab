@@ -21,10 +21,10 @@ export const isNative = () => Capacitor.isNativePlatform();
 export class DataError extends Error {}
 
 /** GET a JSON document. In the app it goes through the native HTTP stack, so sites without CORS work too. */
-export async function getJson<T>(url: string, opts: { timeout?: number } = {}): Promise<T> {
+export async function getJson<T>(url: string, opts: { timeout?: number; headers?: Record<string, string> } = {}): Promise<T> {
   const timeout = opts.timeout ?? 20_000;
   if (isNative() && /^https?:/.test(url)) {
-    const res = await CapacitorHttp.get({ url, connectTimeout: timeout, readTimeout: timeout, headers: { Accept: 'application/json' } });
+    const res = await CapacitorHttp.get({ url, connectTimeout: timeout, readTimeout: timeout, headers: { Accept: 'application/json', ...opts.headers } });
     if (res.status < 200 || res.status >= 300) throw new DataError(`${new URL(url).host} answered ${res.status}`);
     return (typeof res.data === 'string' ? JSON.parse(res.data) : res.data) as T;
   }
