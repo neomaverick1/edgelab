@@ -50,6 +50,7 @@ jobs:
         with:
           name: android
           path: dist
+      - run: rm -f dist/Edgelab-Play.aab
       - name: Or the latest released APK (scheduled data refreshes)
         if: needs.android.result != 'success'
         env:
@@ -87,14 +88,32 @@ jobs:
       - run: npm ci
       - name: Build the web app and copy it into the Android project
         run: npm run android
-      - name: Build the APK
+      - name: Build the phone APK (demo key, so each build installs over the last)
         working-directory: android
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
         run: ./gradlew assembleRelease --no-daemon
       - run: cp android/app/build/outputs/apk/release/app-release.apk Edgelab.apk
+      - name: Play upload key from secrets
+        env:
+          UPLOAD_JKS_B64: ${{ secrets.UPLOAD_JKS_B64 }}
+        run: |
+          if [ -n "$UPLOAD_JKS_B64" ]; then echo "$UPLOAD_JKS_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"; echo "UPLOAD_KEYSTORE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"; fi
+      - name: Build the Google Play bundle
+        working-directory: android
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          UPLOAD_STORE_PASSWORD: ${{ secrets.UPLOAD_STORE_PASSWORD }}
+          UPLOAD_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+          UPLOAD_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
+        run: ./gradlew bundleRelease --no-daemon
+      - run: cp android/app/build/outputs/bundle/release/app-release.aab Edgelab-Play.aab
       - uses: actions/upload-artifact@v4
         with:
           name: android
-          path: Edgelab.apk
+          path: |
+            Edgelab.apk
+            Edgelab-Play.aab
 
   ios:
     needs: checks
@@ -138,6 +157,7 @@ jobs:
           make_latest: true
           files: |
             Edgelab.apk
+            Edgelab-Play.aab
             Edgelab-iOS-Simulator.zip
           body: |
             **Android:** download `Edgelab.apk` on an Android phone and open it to install (allow installs from this source when asked). The app loads any stock, ETF, index, forex pair, future or crypto pair live on every timeframe.
