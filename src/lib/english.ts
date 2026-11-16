@@ -18,6 +18,7 @@ import {
   type Strategy,
 } from './rules';
 import SOURCE from './english.ts?raw';
+import { WORDS } from './words';
 
 export interface ParseResult {
   strategy: Strategy;
@@ -478,7 +479,7 @@ const PLAIN = new Set(
 );
 // Every word the reader itself uses (in its patterns and tables) counts as correct, so "fast", "slow", "dip",
 // "flips" or "slopes" are never "corrected" into something else.
-const KNOWN = new Set([...VOCAB, ...PLAIN, ...(SOURCE.replace(/\/\/.*$/gm, '').toLowerCase().match(/[a-z]{3,}/g) ?? [])]);
+const KNOWN = new Set([...VOCAB, ...PLAIN, ...WORDS.split(' '), ...(SOURCE.replace(/\/\/.*$/gm, '').toLowerCase().match(/[a-z]{3,}/g) ?? [])]);
 const VOCAB_SET = new Set(VOCAB);
 const CANDIDATES = [...new Set([...VOCAB, ...PLAIN])].filter((w) => w.length >= 3);
 function fixTypos(text: string): string {

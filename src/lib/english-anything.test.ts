@@ -157,3 +157,9 @@ const MEANS: [string, string][] = [
 describe('reads them right', () => {
   it.each(MEANS)('%s', (t, want) => expect(describeStrategy(parseEnglish(t).strategy).startsWith(want), describeStrategy(parseEnglish(t).strategy)).toBe(true));
 });
+
+it('leaves ordinary words alone when it can’t read a sentence', () => {
+  const r = parseEnglish('buy when the chart looks really strong and buyers are piling in');
+  expect(r.unknown.join(' ')).toContain('looks really strong');
+  expect(r.unknown.join(' ')).toContain('piling in');
+});
