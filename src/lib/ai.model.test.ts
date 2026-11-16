@@ -24,6 +24,10 @@ const CASES: [string, RegExp][] = [
   ['huge volume coming in', /RelVol/],
   ['the trend is pointing down', /below SMA 200|falling/],
   ['it is in a strong uptrend', /above SMA 200|ADX/],
+  ['stock keeps going up and up', /above SMA 200|rising/],
+  ['people are dumping it hard', /RSI 14 is below|falling|below SMA 200/],
+  ['hold for 15 candles', /Time exit after 15 bars/],
+  ['trail my stop 2 atr behind', /Trailing stop 2 × ATR/],
 ];
 
 describe.skipIf(!has)('built-in AI model', () => {
@@ -40,7 +44,7 @@ describe.skipIf(!has)('built-in AI model', () => {
       const v = await vec(text);
       const scores = bank.map((b) => b.reduce((s, x, k) => s + x * v[k], 0));
       const best = scores.indexOf(Math.max(...scores));
-      const read = readPhrase(fillMeaning(MEANINGS[best][1], text)) ?? '';
+      const read = scores[best] >= 0.6 ? (readPhrase(fillMeaning(MEANINGS[best][1], text)) ?? '') : '(asks to say it another way)';
       const good = want.test(read);
       if (good) ok++;
       console.log(`${good ? 'OK' : 'X '} ${scores[best].toFixed(2)} "${text}" -> ${MEANINGS[best][0]} -> ${read}`);

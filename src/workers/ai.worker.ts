@@ -16,7 +16,7 @@ export type AiReply =
   | { type: 'error'; id?: number; message: string };
 
 // How close a phrase has to be to a known meaning before the AI uses it (cosine similarity, 0 to 1).
-const MATCH = 0.55;
+const MATCH = 0.6;
 
 // The model and the AI engine both come from the app itself.
 env.allowLocalModels = true;
