@@ -1,0 +1,10 @@
+name: model-sizes
+on: workflow_dispatch
+jobs:
+  sizes:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          for m in onnx-community/SmolLM2-135M-Instruct onnx-community/SmolLM2-360M-Instruct onnx-community/Qwen2.5-0.5B-Instruct onnx-community/gemma-3-270m-it-ONNX onnx-community/Qwen3-0.6B-ONNX HuggingFaceTB/SmolLM2-360M-Instruct onnx-community/granite-4.0-350m-ONNX-web onnx-community/LFM2-350M-ONNX; do
+            echo "== $m"; curl -fsS "https://huggingface.co/api/models/$m/tree/main/onnx" | jq -r '.[]|"\(.path) \((.size/1048576|floor))MB"' || echo missing
+          done
