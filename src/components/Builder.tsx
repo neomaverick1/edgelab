@@ -2,7 +2,8 @@ import { AlertTriangle, BookOpen, Brain, Check, Clock, Code2, CopyPlus, FilePlus
 import { useMemo, useRef, useState } from 'react';
 
 import { INDICATORS, SOURCES, indicator, type Group as IndGroup, type Source } from '../lib/catalog';
-import { describe as describeStrategy, parseEnglish, prepareEnglish, readPhrase, type ParseResult } from '../lib/english';
+import { describe as describeStrategy, parseEnglish, type ParseResult } from '../lib/english';
+import { understand } from '../lib/understand';
 import { useAi } from './useAi';
 import { ENGLISH_EXAMPLES, PRESETS } from '../lib/presets';
 import {
@@ -163,14 +164,10 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
     }
     setBusy(true);
     ai.start();
-    let prepared = prepareEnglish(value);
-    for (const u of first.unknown) {
-      const to = await ai.rewrite(u);
-      if (id !== run.current) return;
-      if (to && readPhrase(to)) prepared = prepared.includes(u) ? prepared.replace(u, to.toLowerCase()) : `${prepared}, ${to.toLowerCase()}`;
-    }
+    const r = await understand(value, strategy, ai.rewrite);
+    if (id !== run.current) return;
     setBusy(false);
-    apply(parseEnglish(prepared, strategy));
+    apply(r);
   };
   const unknown = result?.unknown ?? [];
 
