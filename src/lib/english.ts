@@ -474,9 +474,8 @@ export function parseEnglish(input: string, base?: Strategy): ParseResult {
   const hasLong = s.longEntry.items.length > 0;
   const hasShort = s.shortEntry.items.length > 0;
   if (!understood.some((n) => /only|both|long and short/i.test(n))) s.side = hasLong && hasShort ? 'both' : hasShort ? 'short' : 'long';
-  for (const sec of ['longEntry', 'longExit', 'shortEntry', 'shortExit', 'filter'] as const) {
-    if (s[sec].items.length) understood.unshift(`${SECTION_LABEL[sec]}: ${describeGroup(s[sec])}`);
-  }
+  const heads = (['longEntry', 'longExit', 'shortEntry', 'shortExit', 'filter'] as const).filter((sec) => s[sec].items.length).map((sec) => `${SECTION_LABEL[sec]}: ${describeGroup(s[sec])}`);
+  understood.unshift(...heads);
   return { strategy: s, understood, unknown: unknown.filter((u) => u && !/^(?:and|or|then|also)$/.test(u)) };
 }
 

@@ -127,7 +127,7 @@ export function PriceChart({ candles, plots, trades, open, forming, intraday, lo
         pane = panes.get(p.pane)!;
       }
       const c = SERIES[color++ % SERIES.length];
-      const s = a.chart.addSeries(LineSeries, { color: c, lineWidth: p.place === 'overlay' ? 2 : 1, priceLineVisible: false, lastValueVisible: p.place === 'pane', crosshairMarkerVisible: false, title: '' }, pane);
+      const s = a.chart.addSeries(LineSeries, { color: c, lineWidth: 1, priceLineVisible: false, lastValueVisible: p.place === 'pane', crosshairMarkerVisible: false, title: '' }, pane);
       s.setData(points(candles, p.values));
       if (pane > 0 && p.levels)
         for (const lv of p.levels) s.createPriceLine({ price: lv, color: '#c7cbd4', lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: false, title: '' });

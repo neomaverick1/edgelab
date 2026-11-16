@@ -317,7 +317,14 @@ export function evaluate(s: Strategy, d: Inputs): Signals {
     const def = indicator(op.id);
     if (def.place === 'none') continue;
     const vals = ev.outputs(op);
-    const shown = def.place === 'overlay' ? def.outputs.filter((o) => !PANE_OUTPUTS.has(`${op.id}.${o.key}`) && !HIDDEN_OUTPUTS.has(`${op.id}.${o.key}`)).map((o) => o.key) : def.outputs.map((o) => o.key);
+    // Bands are drawn whole (upper, middle, lower); other indicators only show the lines the rules use.
+    const BANDS = new Set(['bb', 'keltner', 'ichimoku']);
+    const shown =
+      def.place === 'overlay'
+        ? BANDS.has(op.id)
+          ? def.outputs.filter((o) => !PANE_OUTPUTS.has(`${op.id}.${o.key}`) && !HIDDEN_OUTPUTS.has(`${op.id}.${o.key}`) && (op.id !== 'ichimoku' || o.key.startsWith('span'))).map((o) => o.key)
+          : []
+        : def.outputs.map((o) => o.key);
     const keys = new Set([...shown, ...[...outs].filter((o) => !HIDDEN_OUTPUTS.has(`${op.id}.${o}`))]);
     for (const out of keys) {
       const paneOut = def.place === 'pane' || PANE_OUTPUTS.has(`${op.id}.${out}`);

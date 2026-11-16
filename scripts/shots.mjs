@@ -114,12 +114,14 @@ try {
 
   // 9. Phone
   p = await open({ width: 390, height: 844 }, 3);
+  await p.getByRole('tab', { name: 'Strategy' }).click();
+  await wait(p, 600);
   await preset(p, 'Turtle breakout');
+  await shot(p, 'phone-builder');
+  await p.getByRole('tab', { name: 'Results' }).click();
+  await wait(p, 800);
   await period(p, '5Y');
   await shot(p, 'phone-results');
-  await p.getByRole('tab', { name: 'Strategy' }).click();
-  await wait(p, 800);
-  await shot(p, 'phone-builder');
   await p.getByRole('tab', { name: 'Lab' }).click();
   await wait(p, 600);
   await p.getByRole('button', { name: 'Run every test' }).click();
