@@ -1,4 +1,4 @@
-// The built-in AI: a small language-understanding model (about 21 MB) that ships inside the app and runs on the
+// The built-in AI: a small language-understanding model (about 32 MB) that ships inside the app and runs on the
 // device. It works out what a phrase means by comparing it with every phrasing in MEANINGS, picks the closest one,
 // and fills in the trader's own numbers. No download, no connection, nothing leaves the device.
 import { env, pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
@@ -6,7 +6,7 @@ import ortWasm from '../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threa
 
 import { fillMeaning, MEANINGS, shape } from '../lib/meanings';
 
-export const AI_MODEL = 'Xenova/all-MiniLM-L6-v2';
+export const AI_MODEL = 'Xenova/bge-small-en-v1.5';
 
 export type AiRequest = { type: 'load' } | { type: 'rewrite'; id: number; text: string };
 export type AiReply =
@@ -16,7 +16,7 @@ export type AiReply =
   | { type: 'error'; id?: number; message: string };
 
 // How close a phrase has to be to a known meaning before the AI uses it (cosine similarity, 0 to 1).
-const MATCH = 0.6;
+const MATCH = 0.72;
 
 // The model and the AI engine both come from the app itself.
 env.allowLocalModels = true;

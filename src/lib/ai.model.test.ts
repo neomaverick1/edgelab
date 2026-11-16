@@ -10,8 +10,8 @@ import { readPhrase } from './english';
 import { fillMeaning, MEANINGS, shape } from './meanings';
 
 const DIR = resolve(__dirname, '../../public/models');
-const MODELS = ['Xenova/all-MiniLM-L6-v2', 'Xenova/bge-small-en-v1.5'].filter((m) => existsSync(resolve(DIR, m, 'onnx/model_quantized.onnx')));
-const has = MODELS.includes('Xenova/all-MiniLM-L6-v2');
+const MODELS = ['Xenova/bge-small-en-v1.5', 'Xenova/all-MiniLM-L6-v2'].filter((m) => existsSync(resolve(DIR, m, 'onnx/model_quantized.onnx')));
+const has = MODELS.includes('Xenova/bge-small-en-v1.5');
 
 const CASES: [string, RegExp][] = [
   ['the chart looks really strong', /ADX 14 is above/],
@@ -38,6 +38,15 @@ const CASES: [string, RegExp][] = [
   ['when it is stupidly overbought', /RSI 14 is above 70/],
   ['if it crashes 6 percent get out', /Stop loss 6%/],
   ['it is making fresh 52 day highs', /above 52-bar high/],
+  // a fresh set, never tuned against
+  ['the thing is absolutely flying', /above SMA 200|rising|ADX/],
+  ['volume went crazy', /RelVol 20 is above/],
+  ["if I'm down 3 percent just sell", /Stop loss 3%/],
+  ['bank the profit at 12 percent', /Take profit 100% at 12%/],
+  ['price is way oversold', /RSI 14 is below 30/],
+  ['the whole market is tanking', /below SMA 200|falling|RSI 14 is below/],
+  ['after 20 days close it no matter what', /Time exit after 20 bars/],
+  ['lowest close in 30 days', /below 30-bar low/],
 ];
 
 describe.skipIf(!has)('built-in AI model', () => {
@@ -54,7 +63,7 @@ describe.skipIf(!has)('built-in AI model', () => {
       const v = await vec(text);
       const scores = bank.map((b) => b.reduce((s, x, k) => s + x * v[k], 0));
       const best = scores.indexOf(Math.max(...scores));
-      const read = scores[best] >= 0.6 ? (readPhrase(fillMeaning(MEANINGS[best][1], text)) ?? '') : '(asks to say it another way)';
+      const read = scores[best] >= (model.includes('bge') ? 0.72 : 0.6) ? (readPhrase(fillMeaning(MEANINGS[best][1], text)) ?? '') : '(asks to say it another way)';
       const good = want.test(read);
       if (good) ok++;
       console.log(`${good ? 'OK' : 'X '} ${scores[best].toFixed(2)} "${text}" -> ${MEANINGS[best][0]} -> ${read}`);
