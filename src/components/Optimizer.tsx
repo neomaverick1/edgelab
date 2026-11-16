@@ -1,5 +1,5 @@
 import { Check, Sparkles } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { OBJECTIVES, type Objective } from '../lib/metrics';
 import { axisValues, type GridResult } from '../lib/robustness';
@@ -12,7 +12,7 @@ import { NumberInput } from './ui';
 import { useLab } from './useLab';
 
 /** Tries every combination of two numbers in the strategy and applies the best one with a click. */
-export function Optimizer({ strategy, run, onApply }: { strategy: Strategy; run: RunResult; onApply: (s: Strategy) => void }) {
+export function Optimizer({ strategy, run, onApply, autoRun = 0 }: { strategy: Strategy; run: RunResult; onApply: (s: Strategy) => void; autoRun?: number }) {
   const tun = useMemo(() => tunables(strategy), [strategy]);
   const [axes, setAxes] = useState<AxisCfg[]>(() => tun.slice(0, 2).map(defaultAxis));
   const [objective, setObjective] = useState<Objective>('returnOverDD');
@@ -40,6 +40,15 @@ export function Optimizer({ strategy, run, onApply }: { strategy: Strategy; run:
       toast(e instanceof Error ? e.message : 'The optimizer failed.');
     }
   };
+
+  // The "Optimize this strategy" button on the results screen starts a run straight away.
+  const started = useRef(0);
+  useEffect(() => {
+    if (autoRun && autoRun !== started.current) {
+      started.current = autoRun;
+      void optimize();
+    }
+  });
 
   if (!tun.length) return <p className="muted">Add rules with indicators or turn on a stop to get numbers to optimize.</p>;
   return (

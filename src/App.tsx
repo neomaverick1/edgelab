@@ -1,4 +1,4 @@
-import { BarChart3, Code2, FlaskConical, Radio, RefreshCw, SlidersHorizontal, Swords } from 'lucide-react';
+import { BarChart3, Code2, FlaskConical, Radio, RefreshCw, SlidersHorizontal, Sparkles, Swords } from 'lucide-react';
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 
 import { AssetIcon, AssetPicker } from './components/AssetPicker';
@@ -58,6 +58,12 @@ export default function App() {
   const [picker, setPicker] = useState(false);
   const [log, setLog] = useState(false);
   const [tab, setTab] = useState<'trades' | 'monthly' | 'optimizer' | 'stats' | 'exits' | 'words'>('trades');
+  const [optimizeRun, setOptimizeRun] = useState(0);
+  const optimizeNow = () => {
+    setTab('optimizer');
+    setOptimizeRun((n) => n + 1);
+    requestAnimationFrame(() => document.getElementById('results-tabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
   const chartRef = useRef<PriceChartHandle>(null);
   const sync = useMemo(() => createSync(), []);
 
@@ -250,6 +256,9 @@ export default function App() {
             run && result && 'plots' in result ? (
               <div className="main-inner">
                 <Hero r={run} title={`${strategy.name} · ${asset.display} ${asset.source === 'csv' ? granularityLabel(run.granularity) : tf}`} />
+                <button className="btn gold optimize-cta" onClick={optimizeNow}>
+                  <Sparkles /> Optimize this strategy
+                </button>
                 <Panel
                   title="Price and trades"
                   sub={`${run.bt.trades.length} trades · arrows are entries, dots are exits`}
@@ -263,7 +272,7 @@ export default function App() {
                 >
                   <PriceChart ref={chartRef} candles={shown!.candles} plots={shown!.plots} trades={run.bt.trades} intraday={intraday} log={log} sync={sync} fitKey={`${asset.id}|${tf}|${from}|${to}`} />
                 </Panel>
-                <section className="panel">
+                <section className="panel" id="results-tabs">
                   <div className="tabs" role="tablist">
                     {(
                       [
@@ -283,7 +292,7 @@ export default function App() {
                   <div className="panel-body">
                     {tab === 'trades' ? <TradesTable trades={run.bt.trades} granularity={run.granularity} onPick={(t) => chartRef.current?.focus(t.entryTime, t.exitTime)} /> : null}
                     {tab === 'monthly' ? <MonthlyTable r={run} /> : null}
-                    {tab === 'optimizer' ? <Optimizer strategy={strategy} run={run} onApply={setStrategy} /> : null}
+                    {tab === 'optimizer' ? <Optimizer strategy={strategy} run={run} onApply={setStrategy} autoRun={optimizeRun} /> : null}
                     {tab === 'stats' ? <StatsList st={run.stats} /> : null}
                     {tab === 'exits' ? <ExitBreakdown st={run.stats} /> : null}
                     {tab === 'words' ? <p className="prose">{describe(strategy)}</p> : null}

@@ -1758,3 +1758,10 @@ textarea.input {
     transition: none !important;
   }
 }
+
+.optimize-cta {
+  width: 100%;
+  justify-content: center;
+  height: 48px;
+  font-size: 15px;
+}
