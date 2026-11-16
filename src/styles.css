@@ -146,6 +146,34 @@ p {
 .get-app:hover {
   background: #b4862b;
 }
+.get-app {
+  border: 0;
+  cursor: pointer;
+}
+.get-app-body {
+  display: grid;
+  gap: 22px;
+}
+.get-app-body h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+.get-app-body ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  line-height: 1.9;
+}
+.get-app-body .inline {
+  width: 16px;
+  height: 16px;
+  vertical-align: -3px;
+  color: #0a7aff;
+}
+.get-app-body .btn {
+  display: inline-flex;
+  text-decoration: none;
+  margin-bottom: 8px;
+}
 .get-app svg {
   width: 16px;
   height: 16px;

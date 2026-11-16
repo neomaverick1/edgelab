@@ -1,0 +1,15 @@
+{
+  "name": "Edgelab",
+  "short_name": "Edgelab",
+  "description": "Strategy lab for any market: build, backtest, stress-test and paper trade trading strategies.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f5f8",
+  "theme_color": "#f6f7f9",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

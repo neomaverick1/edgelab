@@ -3,7 +3,8 @@
 Edgelab builds, backtests and stress-tests trading strategies on **any market**: stocks, ETFs, indexes, forex, futures and every crypto pair. You can write rules in a visual builder or describe them in **plain English**. It then tells you how likely the result is to hold up: walk-forward testing, Monte Carlo, a parameter stability map and an overfitting grade from A to F. Strategies can be **paper traded live**, raced head to head, and exported to TradingView Pine Script.
 
 - **Live web app:** [neomaverick1.github.io/edgelab](https://neomaverick1.github.io/edgelab/)
-- **Android app:** the latest `Edgelab.apk` is on the [Releases page](https://github.com/neomaverick1/edgelab/releases/latest).
+- **Android app:** [download Edgelab.apk](https://neomaverick1.github.io/edgelab/Edgelab.apk) (also on the [Releases page](https://github.com/neomaverick1/edgelab/releases/latest)).
+- **iPhone and iPad:** open the web app in Safari, tap Share, then **Add to Home Screen**. It installs as a full-screen app with its own icon and works offline. The native iOS project is in [`ios/`](ios) and CI builds it on every push.
 
 <img src="docs/screenshots/overview.jpg" alt="Backtest of the Turtle breakout on Bitcoin with the equity curve, drawdown and key statistics" width="100%">
 
@@ -47,8 +48,8 @@ Edgelab builds, backtests and stress-tests trading strategies on **any market**:
 - **Robustness** ([`src/lib/robustness.ts`](src/lib/robustness.ts)): grids, walk-forward, Monte Carlo with a seeded random generator, and the grade.
 - **Plain English** ([`src/lib/english.ts`](src/lib/english.ts)): a pattern-based parser and writer. The tests check that every built-in system survives a round trip from rules to words and back.
 - **Data** ([`src/lib/data`](src/lib/data)): Coinbase, Binance, Yahoo Finance, CSV, resampling (1h → 4h, 1d → 1w) and live feeds. In the Android app, requests go through the native HTTP stack, so Yahoo Finance works without a server.
-- **Android:** a [Capacitor](https://capacitorjs.com) app ([`android/`](android)) that wraps the same build.
-- **CI** ([`.github/workflows/build.yml`](.github/workflows/build.yml)) runs on every push. It type-checks, lints and runs the tests, downloads the market snapshot, deploys the website, builds a signed APK and publishes a release. A daily scheduled run refreshes the snapshot after the US close.
+- **Android and iOS:** [Capacitor](https://capacitorjs.com) apps ([`android/`](android), [`ios/`](ios)) that wrap the same build. The website is also an installable web app with an offline service worker.
+- **CI** ([`.github/workflows/build.yml`](.github/workflows/build.yml)) runs on every push. It type-checks, lints and runs the tests, downloads the market snapshot, deploys the website, builds a signed APK and the iOS app on a Mac runner, and publishes a release. A daily scheduled run refreshes the snapshot after the US close.
 
 ## Run it
 
@@ -59,6 +60,7 @@ npm run data         # download the stock/forex/futures snapshot into public/dat
 npm test             # 78 tests: engine, exits, sizing, indicators, English parser, Pine export, CSV, robustness
 npm run build
 npm run android      # build and copy into the Android project, then open android/ in Android Studio
+npm run ios          # build and copy into the iOS project, then open ios/App/App.xcodeproj in Xcode
 ```
 
 The APK in the releases is signed with a demo key that is kept in the repository, so each new build installs over the last one. Sign with your own private key before publishing to Google Play.

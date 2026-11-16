@@ -11,10 +11,13 @@
     "lint": "oxlint --deny-warnings",
     "test": "vitest run",
     "data": "node scripts/fetch-data.mjs",
-    "android": "npm run build && npx cap sync android"
+    "android": "npm run build && npx cap sync android",
+    "ios": "npm run build && cap sync ios"
   },
   "dependencies": {
+    "@capacitor/android": "^8.6.2",
     "@capacitor/core": "^8.6.2",
+    "@capacitor/ios": "^8.6.2",
     "@fontsource-variable/fraunces": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@fontsource-variable/manrope": "^5.3.0",
@@ -22,8 +25,7 @@
     "lightweight-charts": "^5.3.0",
     "lucide-react": "^1.73.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "@capacitor/android": "^8.6.2"
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.6.2",

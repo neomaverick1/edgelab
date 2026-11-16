@@ -96,21 +96,52 @@ jobs:
           name: android
           path: Edgelab.apk
 
+  ios:
+    needs: checks
+    if: github.event_name != 'schedule'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build the web app and copy it into the iOS project
+        run: npm run ios
+      - name: Build the iOS app (simulator, unsigned)
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+          cd build/Build/Products/Release-iphonesimulator && zip -qry "$GITHUB_WORKSPACE/Edgelab-iOS-Simulator.zip" App.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: Edgelab-iOS-Simulator.zip
+
   release:
-    needs: [android, deploy-web]
+    needs: [android, ios, deploy-web]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: android
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v2.0.${{ github.run_number }}
           name: Edgelab 2.0.${{ github.run_number }}
           make_latest: true
-          files: Edgelab.apk
+          files: |
+            Edgelab.apk
+            Edgelab-iOS-Simulator.zip
           body: |
             **Android:** download `Edgelab.apk` on an Android phone and open it to install (allow installs from this source when asked). The app loads any stock, ETF, index, forex pair, future or crypto pair live on every timeframe.
+
+            **iPhone and iPad:** open the web link below in Safari, tap Share, then Add to Home Screen. It installs as a full-screen app with its own icon and works offline. `Edgelab-iOS-Simulator.zip` is the native iOS build for the Xcode simulator (an App Store build needs an Apple Developer account).
 
             **Web:** https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/ (every Coinbase and Binance pair live, plus a daily snapshot of 200 popular markets).
