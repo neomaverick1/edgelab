@@ -28,8 +28,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
-      - name: Put the built-in AI model in place for its test
-        run: bash scripts/fetch-ai-model.sh
+      - name: Put the built-in AI model (and a bigger one to compare) in place for its test
+        run: bash scripts/fetch-ai-model.sh && bash scripts/fetch-ai-model.sh Xenova/bge-small-en-v1.5
       - run: npm test
 
   web:
