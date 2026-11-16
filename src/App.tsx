@@ -1,4 +1,4 @@
-import { BarChart3, Code2, FlaskConical, Radio, RefreshCw, SlidersHorizontal, Swords } from 'lucide-react';
+import { BarChart3, Code2, FlaskConical, Radio, RefreshCw, SlidersHorizontal, Smartphone, Swords } from 'lucide-react';
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 
 import { AssetIcon, AssetPicker } from './components/AssetPicker';
@@ -8,7 +8,7 @@ import { PriceChart, type PriceChartHandle } from './components/PriceChart';
 import { ExitBreakdown, Hero, MonthlyTable, StatsList, TradesTable, type RunResult } from './components/Results';
 import { Panel, Seg, Toaster, Toggle } from './components/ui';
 import { inputsOf } from './lib/catalog';
-import { TIMEFRAMES, type Timeframe } from './lib/data/core';
+import { isNative, TIMEFRAMES, type Timeframe } from './lib/data/core';
 import { granularityLabel } from './lib/data/csv';
 import { assetTitle } from './lib/data/search';
 import { loadSeries, SOURCE_LABEL, timeframesFor, type Asset, type Series } from './lib/data/sources';
@@ -213,6 +213,12 @@ export default function App() {
             </button>
           ))}
         </nav>
+        {isNative() ? null : (
+          <a className="get-app" href="./Edgelab.apk" download="Edgelab.apk" title="Download the Android app (APK)">
+            <Smartphone />
+            <span>Android app</span>
+          </a>
+        )}
       </header>
 
       <div className="body" data-view={view}>

@@ -31,7 +31,8 @@ jobs:
       - run: npm test
 
   web:
-    needs: checks
+    needs: [checks, android]
+    if: ${{ !cancelled() && needs.checks.result == 'success' && needs.android.result != 'failure' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +44,17 @@ jobs:
       - name: Download the market snapshot for the web version
         run: npm run data
       - run: npm run build
+      - name: Get the APK from this build
+        if: needs.android.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: android
+          path: dist
+      - name: Or the latest released APK (scheduled data refreshes)
+        if: needs.android.result != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download --repo ${{ github.repository }} --pattern Edgelab.apk --dir dist
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
