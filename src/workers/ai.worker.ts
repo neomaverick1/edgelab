@@ -2,7 +2,9 @@
 // otherwise the CPU). It rewrites a condition the rule reader couldn't understand into words the reader knows.
 import { env, pipeline, type TextGenerationPipeline } from '@huggingface/transformers';
 
-export const AI_MODEL = 'onnx-community/Qwen2.5-1.5B-Instruct';
+// The larger model when the device has a GPU for it; a smaller one that still runs at a usable speed on the CPU.
+export const AI_MODEL_GPU = 'onnx-community/Qwen2.5-1.5B-Instruct';
+export const AI_MODEL_CPU = 'onnx-community/Qwen2.5-0.5B-Instruct';
 
 export type AiRequest = { type: 'load' } | { type: 'rewrite'; id: number; text: string };
 export type AiReply =
@@ -39,7 +41,7 @@ async function load() {
   device = hasGpu ? 'webgpu' : 'wasm';
   const files = new Map<string, { loaded: number; total: number }>();
   const make = pipeline as unknown as (task: string, model: string, opts: Record<string, unknown>) => Promise<TextGenerationPipeline>;
-  return await make('text-generation', AI_MODEL, {
+  return await make('text-generation', hasGpu ? AI_MODEL_GPU : AI_MODEL_CPU, {
     device,
     dtype: hasGpu ? 'q4f16' : 'q4',
     progress_callback: (p: { status: string; file?: string; loaded?: number; total?: number }) => {

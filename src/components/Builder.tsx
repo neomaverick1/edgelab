@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { INDICATORS, SOURCES, indicator, type Group as IndGroup, type Source } from '../lib/catalog';
 import { describe as describeStrategy, normalizeEnglish, parseEnglish, readCondition, type ParseResult } from '../lib/english';
-import { aiDownloaded, useAi } from './useAi';
+import { aiDownloaded, aiDownloadSize, useAi } from './useAi';
 import { ENGLISH_EXAMPLES, PRESETS } from '../lib/presets';
 import {
   blankStrategy,
@@ -258,7 +258,7 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
               {ai.state === 'off' || ai.state === 'error' ? (
                 <div>
                   <b>Let the built-in AI read {unknown.length === 1 ? 'this part' : `these ${unknown.length} parts`}</b>
-                  <p className="muted">It runs on this device, so nothing leaves your phone. The first time it downloads its model (about 1.2 GB on Wi-Fi), then it works offline.</p>
+                  <p className="muted">It runs on this device, so nothing leaves your phone. The first time it downloads its model ({aiDownloadSize()}, best on Wi-Fi), then it works offline.</p>
                   {ai.state === 'error' ? <p style={{ color: '#8f2236' }}>The AI couldn’t start: {ai.error}</p> : null}
                   <button className="btn gold sm" onClick={ai.start}>
                     <Brain /> {ai.state === 'error' ? 'Try again' : 'Download and read'}

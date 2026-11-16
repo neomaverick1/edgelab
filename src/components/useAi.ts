@@ -45,6 +45,9 @@ function getWorker() {
   return worker;
 }
 
+/** Download size shown before the first download: the GPU model is bigger. */
+export const aiDownloadSize = () => ((navigator as Navigator & { gpu?: unknown }).gpu ? 'about 1.2 GB' : 'about 500 MB');
+
 /** True once the model has been downloaded on this device before (it's kept in the browser cache). */
 export function aiDownloaded() {
   try {
