@@ -523,6 +523,12 @@ function phrasebook(text: string): string {
     [/\s*\b(?:please|pls|plz|thanks|thank you|thx)\b[.!]?/g, ''],
     [/\b(buy|sell|short)s\b/g, '$1'],
     [/\bbuy low,? (?:and )?sell high\b/g, 'buy when rsi is below 30, sell when rsi is above 70'],
+    // exits said as a move against or for the trade: "close trade if candle flips to 1.5 times the atr"
+    [/\b(\d+(?:\.\d+)?) ?(?:times|x) (?:the )?(?:atrs?|average true range)\b/g, '$1 atr'],
+    [/\b(?:close|exit|sell|get out|stop out|close out|cut|bail)(?: of)?(?: the| my| this)?(?: trade| position| it)? (?:if|when|once|as soon as) (?:the )?(?:candle|price|it|trade|position|market) (?:flips|moves|goes|drops|falls|turns|runs|swings|loses|is down|goes down|moves down)(?: back)?(?: against (?:me|you|it|us|the trade))?(?: (?:to|by))? (\d+(?:\.\d+)?) ?(atr|%)(?: against (?:me|you|it|us|the trade))?/g, 'stop loss $1 $2'],
+    [/\b(?:close|exit|sell|get out|close out|cash out|take profit)(?: of)?(?: the| my| this)?(?: trade| position| it)? (?:if|when|once|as soon as) (?:the )?(?:candle|price|it|trade|position|market) (?:gains|rises|goes up|is up|climbs|moves up|runs|moves|goes|makes)(?: in my favou?r)?(?: (?:to|by))? (\d+(?:\.\d+)?) ?(atr|%)(?: in my favou?r)?/g, 'take profit $1 $2'],
+    [/\bstop(?: loss)? (?:at|of|is|=) (?=\d)/g, 'stop loss '],
+    [/\b(?:take profit|target|tp) (?:at|of|is|=) (?=\d)/g, 'take profit '],
     // filler and word numbers
     [/^\s*(?:i want to|i'd like to|i would like to|i wanna|i'll|i will|please|let's|lets|we|you should|should)\s+/g, ' '],
     [/\bzero\b/g, '0'], [/\bten\b/g, '10'], [/\btwenty\b/g, '20'], [/\bthirty\b/g, '30'], [/\bfifty\b/g, '50'], [/\bseventy\b/g, '70'], [/\beighty\b/g, '80'],

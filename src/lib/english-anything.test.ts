@@ -123,6 +123,16 @@ const SENTENCES = [
   "byu wehn the 20 ema is abvoe the 50 ema",
   "buy when price breaks out of the 20 day high",
   "short when price falls under the 50 sma",
+  // exits said as a move against or for the trade
+  "Buy when candle closes above 25 sma. Close trade if candle flips to 1.5 times the atr",
+  "buy when price closes above the 25 sma, exit if price moves 1.5 atr against me",
+  "buy above the 25 sma, get out if it drops 2 times the atr",
+  "buy when price is above 50 ema. stop out if candle goes 1.5x atr against me",
+  "buy when rsi under 30. close the trade if it falls 3%",
+  "buy when rsi under 30, take profit at 3 times the atr",
+  "buy when rsi under 30 close position when it gains 5%",
+  "buy when rsi under 30, stop at 1.5 times atr",
+  "buy when rsi under 30, get out after 10 candles",
 ];
 
 describe('reads everyday sentences', () => {
@@ -153,6 +163,7 @@ const MEANS: [string, string][] = [
   ["get in when the 9 ema crosses the 21 ema, get out when it crosses back", "Buy when EMA 9 crosses above EMA 21. Sell when EMA 9 crosses below EMA 21."],
   ["buy when price is above the 20 sma, sell when its below", "Buy when Close is above SMA 20. Sell when Close is below SMA 20."],
   ["buy bitcoin when its oversold", "Buy when RSI 14 is below 30."],
+  ["Buy when candle closes above 25 sma. Close trade if candle flips to 1.5 times the atr", "Buy when Close crosses above SMA 25. Stop loss 1.5 ATR."],
 ];
 describe('reads them right', () => {
   it.each(MEANS)('%s', (t, want) => expect(describeStrategy(parseEnglish(t).strategy).startsWith(want), describeStrategy(parseEnglish(t).strategy)).toBe(true));
