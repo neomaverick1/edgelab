@@ -610,6 +610,17 @@ function phrasebook(text: string): string {
 }
 
 /** Reads one condition on its own: the rules it makes, or null when it can't be read. */
+/** Reads a short phrase from the AI: a condition, or an exit such as "stop loss 1.5 atr". */
+export function readPhrase(text: string): string | null {
+  const c = readCondition(text);
+  if (c) return c;
+  const r = parseEnglish(text);
+  return r.unknown.length || !r.understood.length ? null : r.understood.join(', ');
+}
+
+/** The text the reader works on, after typos and everyday wording are fixed. */
+export const prepareEnglish = (input: string) => phrasebook(normalizeEnglish(input));
+
 export function readCondition(text: string): string | null {
   const r = parseEnglish(`Buy when ${text}.`);
   return r.unknown.length || !r.strategy.longEntry.items.length ? null : describeGroup(r.strategy.longEntry);

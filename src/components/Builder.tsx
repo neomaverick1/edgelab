@@ -2,8 +2,8 @@ import { AlertTriangle, BookOpen, Brain, Check, Clock, Code2, CopyPlus, FilePlus
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { INDICATORS, SOURCES, indicator, type Group as IndGroup, type Source } from '../lib/catalog';
-import { describe as describeStrategy, normalizeEnglish, parseEnglish, readCondition, type ParseResult } from '../lib/english';
-import { aiDownloaded, aiDownloadSize, useAi } from './useAi';
+import { describe as describeStrategy, parseEnglish, prepareEnglish, readPhrase, type ParseResult } from '../lib/english';
+import { aiBuiltIn, aiDownloaded, aiDownloadSize, useAi } from './useAi';
 import { ENGLISH_EXAMPLES, PRESETS } from '../lib/presets';
 import {
   blankStrategy,
@@ -178,7 +178,7 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
     for (const u of unknown) {
       setReading(u);
       const to = await ai.rewrite(u);
-      const readsAs = to ? readCondition(to) : null;
+      const readsAs = to ? readPhrase(to) : null;
       out.push({ from: u, to: readsAs ? to : null, reads: readsAs, keep: !!readsAs });
     }
     setReading(null);
@@ -194,8 +194,9 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
 
   const addReads = () => {
     if (!reads) return;
-    let norm = normalizeEnglish(source);
-    for (const r of reads) if (r.keep && r.to) norm = norm.replace(r.from, r.to.toLowerCase());
+    let norm = prepareEnglish(source);
+    for (const r of reads)
+      if (r.keep && r.to) norm = norm.includes(r.from) ? norm.replace(r.from, r.to.toLowerCase()) : `${norm}, ${r.to.toLowerCase()}`;
     setReads(null);
     asked.current = source + '|done';
     apply(parseEnglish(norm, strategy));
@@ -226,7 +227,7 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
           />
           <div className="bar">
             <span className="muted" style={{ fontSize: 12 }}>
-              {ai.state === 'ready' ? 'Built-in AI ready · works offline' : 'Works offline'}
+              {ai.state === 'ready' || aiBuiltIn() ? 'Built-in AI · works offline' : 'Works offline'}
             </span>
             <button className="btn gold sm" onClick={() => build()} disabled={!text.trim()}>
               <Sparkles /> Build rules
@@ -255,7 +256,7 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
           {unknown.length && !reads ? (
             <div className="ai-box">
               <Brain />
-              {ai.state === 'off' || ai.state === 'error' ? (
+              {(ai.state === 'off' && !aiBuiltIn()) || ai.state === 'error' ? (
                 <div>
                   <b>Let the built-in AI read {unknown.length === 1 ? 'this part' : `these ${unknown.length} parts`}</b>
                   <p className="muted">It runs on this device, so nothing leaves your phone. The first time it downloads its model ({aiDownloadSize()}, best on Wi-Fi), then it works offline.</p>
@@ -266,7 +267,7 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
                 </div>
               ) : ai.state === 'loading' ? (
                 <div style={{ flex: 1 }}>
-                  <b>{aiDownloaded() ? 'Starting the built-in AI…' : `Downloading the built-in AI… ${Math.round(ai.progress * 100)}%`}</b>
+                  <b>{aiDownloaded() ? 'The built-in AI is reading it…' : `Downloading the built-in AI… ${Math.round(ai.progress * 100)}%`}</b>
                   <div className="progress" style={{ marginTop: 8 }}>
                     <i style={{ width: `${Math.round(ai.progress * 100)}%` }} />
                   </div>

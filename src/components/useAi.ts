@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { Capacitor } from '@capacitor/core';
+
 import type { AiReply, AiRequest } from '../workers/ai.worker';
+
+/** The phone apps carry the AI model inside the app; the website downloads it once. */
+export const aiBuiltIn = () => Capacitor.isNativePlatform();
 
 export type AiState = 'off' | 'loading' | 'ready' | 'error';
 
@@ -50,6 +55,7 @@ export const aiDownloadSize = () => ((navigator as Navigator & { gpu?: unknown }
 
 /** True once the model has been downloaded on this device before (it's kept in the browser cache). */
 export function aiDownloaded() {
+  if (aiBuiltIn()) return true;
   try {
     return localStorage.getItem('edgelab-ai') === '1';
   } catch {
@@ -75,7 +81,7 @@ export function useAi() {
     progress = 0;
     error = '';
     emit();
-    getWorker().postMessage({ type: 'load' } satisfies AiRequest);
+    getWorker().postMessage({ type: 'load', builtIn: aiBuiltIn() } satisfies AiRequest);
   }, []);
   const rewrite = useCallback(
     (text: string) =>
