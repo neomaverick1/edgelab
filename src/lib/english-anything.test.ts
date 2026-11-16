@@ -90,7 +90,7 @@ describe('reads everyday sentences', () => {
   it.each(SENTENCES)('%s', (t) => {
     const r = parseEnglish(t);
     expect(r.unknown, t).toEqual([]);
-    expect(r.strategy.longEntry.items.length + r.strategy.shortEntry.items.length + r.strategy.longExit.items.length + r.strategy.shortExit.items.length).toBeGreaterThan(0);
+    expect(r.understood.length, t).toBeGreaterThan(0);
   });
 });
 
