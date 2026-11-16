@@ -7,7 +7,7 @@ import { env, pipeline, type FeatureExtractionPipeline } from '@huggingface/tran
 import { describe, expect, it } from 'vitest';
 
 import { readPhrase } from './english';
-import { fillMeaning, MEANINGS, shape } from './meanings';
+import { fillMeaning, MEANINGS, pickMeaning, shape } from './meanings';
 
 const DIR = resolve(__dirname, '../../public/models');
 const MODELS = ['Xenova/bge-small-en-v1.5', 'Xenova/all-MiniLM-L6-v2'].filter((m) => existsSync(resolve(DIR, m, 'onnx/model_quantized.onnx')));
@@ -62,8 +62,9 @@ describe.skipIf(!has)('built-in AI model', () => {
     for (const [text, want] of CASES) {
       const v = await vec(text);
       const scores = bank.map((b) => b.reduce((s, x, k) => s + x * v[k], 0));
-      const best = scores.indexOf(Math.max(...scores));
-      const read = scores[best] >= (model.includes('bge') ? 0.72 : 0.6) ? (readPhrase(fillMeaning(MEANINGS[best][1], text)) ?? '') : '(asks to say it another way)';
+      const pick = pickMeaning(scores, text, model.includes('bge') ? 0.72 : 0.6);
+      const best = pick >= 0 ? pick : scores.indexOf(Math.max(...scores));
+      const read = pick >= 0 ? (readPhrase(fillMeaning(MEANINGS[best][1], text)) ?? '') : '(asks to say it another way)';
       const good = want.test(read);
       if (good) ok++;
       console.log(`${good ? 'OK' : 'X '} ${scores[best].toFixed(2)} "${text}" -> ${MEANINGS[best][0]} -> ${read}`);

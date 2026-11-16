@@ -13,6 +13,7 @@ export const MEANINGS: [string, string][] = [
   ['if it drops N percent', 'stop loss {1:2}%'],
   ['if I lose N percent', 'stop loss {1:2}%'],
   ['cut my losses at N percent', 'stop loss {1:2}%'],
+  ['if I am down N percent sell', 'stop loss {1:2}%'],
   ['bail if it falls N percent from where I bought', 'stop loss {1:2}%'],
   ['never lose more than N percent on a trade', 'stop loss {1:2}%'],
   ['get out if it tanks', 'stop loss 3%'],
@@ -37,6 +38,7 @@ export const MEANINGS: [string, string][] = [
   ['close the trade after N candles', 'exit after {1:10} bars'],
   ['get out if nothing happens after N bars', 'exit after {1:10} bars'],
   ['only keep it a week', 'exit after 5 bars'],
+  ['close it after N days no matter what', 'exit after {1:10} bars'],
 
   // trend
   ['the trend is up', 'close is above sma 200'],
@@ -65,6 +67,7 @@ export const MEANINGS: [string, string][] = [
   ['price is dropping right now', 'close is falling'],
   ['price ticks lower', 'close is falling'],
   ['it is plunging', 'close is falling'],
+  ['the whole market is crashing', 'close is below sma 200'],
 
   // strength and momentum
   ['the chart looks really strong', 'adx 14 is above 25'],
@@ -158,4 +161,34 @@ export const shape = (text: string) => text.toLowerCase().replace(/\d+(?:\.\d+)?
 export function fillMeaning(template: string, typed: string): string {
   const nums = typed.match(/\d+(?:\.\d+)?/g) ?? [];
   return template.replace(/\{(\d)(?::([\d.]+))?\}/g, (_m, i: string, fallback?: string) => nums[Number(i) - 1] ?? fallback ?? '');
+}
+
+// Meaning models know "tanking" and "flying" are both about price moving, but not always which way. So the AI also
+// checks direction: when the trader's words clearly point up or down, only a meaning that goes the same way is used.
+const UP_WORDS = /\b(up|higher|rise|rises|rising|rally|rallies|flying|fly|rocket\w*|moon\w*|soar\w*|surg\w*|jump\w*|climb\w*|gain\w*|profit\w*|green|bull\w*|spik\w*|boom\w*|pump\w*|rip\w*|crazy|huge|massive|heavy|explod\w*|lots|tons|expensive|overbought|top|highs?)\b/;
+const DOWN_WORDS = /\b(down|lower|drop\w*|fall\w*|fell|tank\w*|crash\w*|plung\w*|dump\w*|sink\w*|sank|slid\w*|slip\w*|los[se]\w*|lost|red|bear\w*|cheap\w*|dead|dry|dries|quiet|thin|oversold|bottom|lows?|panic\w*|crush\w*)\b/;
+
+type Way = 'up' | 'down' | null;
+export function wayOfText(text: string): Way {
+  const t = text.toLowerCase();
+  const up = UP_WORDS.test(t);
+  const down = DOWN_WORDS.test(t);
+  return up === down ? null : up ? 'up' : 'down';
+}
+export function wayOfMeaning(template: string): Way {
+  if (/^(trailing|exit after|adx|atr)\b/.test(template)) return null;
+  if (/stop loss|below|falling|bar low/.test(template)) return 'down';
+  if (/take profit|above|rising|bar high/.test(template)) return 'up';
+  return null;
+}
+
+/** Picks the meaning for a phrase from its similarity to every meaning, or -1 when nothing is close enough. */
+export function pickMeaning(scores: number[], text: string, threshold: number): number {
+  const order = scores.map((s, i) => [s, i] as const).sort((a, b) => b[0] - a[0]);
+  const way = wayOfText(text);
+  const ok = (i: number) => !way || wayOfMeaning(MEANINGS[i][1]) === way;
+  const same = order.find(([s, i]) => s >= threshold && ok(i) && wayOfMeaning(MEANINGS[i][1]));
+  if (same) return same[1];
+  const any = order.find(([s, i]) => s >= threshold && ok(i));
+  return any ? any[1] : -1;
 }

@@ -4,7 +4,7 @@
 import { env, pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
 import ortWasm from '../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm?url';
 
-import { fillMeaning, MEANINGS, shape } from '../lib/meanings';
+import { fillMeaning, MEANINGS, pickMeaning, shape } from '../lib/meanings';
 
 export const AI_MODEL = 'Xenova/bge-small-en-v1.5';
 
@@ -55,17 +55,14 @@ self.onmessage = async (e: MessageEvent<AiRequest>) => {
       return;
     }
     const [v] = await vectors(embed, [shape(req.text)]);
-    let best = -1;
-    let score = -1;
-    bank.forEach((b, i) => {
+    const scores = bank.map((b) => {
       let s = 0;
       for (let k = 0; k < b.length; k++) s += b[k] * v[k];
-      if (s > score) {
-        score = s;
-        best = i;
-      }
+      return s;
     });
-    post({ type: 'rewrite', id: req.id, text: score >= MATCH ? fillMeaning(MEANINGS[best][1], req.text) : null, score });
+    const best = pickMeaning(scores, req.text, MATCH);
+    const score = best >= 0 ? scores[best] : Math.max(...scores);
+    post({ type: 'rewrite', id: req.id, text: best >= 0 ? fillMeaning(MEANINGS[best][1], req.text) : null, score });
   } catch (err) {
     if (req.type === 'load') ai = null;
     post({ type: 'error', id: req.type === 'rewrite' ? req.id : undefined, message: err instanceof Error ? err.message : String(err) });
