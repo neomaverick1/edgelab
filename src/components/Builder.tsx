@@ -1,5 +1,5 @@
 import { AlertTriangle, BookOpen, Brain, Check, Clock, Code2, CopyPlus, FilePlus2, HelpCircle, Plus, Redo2, Save, Sparkles, Trash2, Undo2, Wand2 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
 import { INDICATORS, SOURCES, indicator, type Group as IndGroup, type Source } from '../lib/catalog';
 import { describe as describeStrategy, parseEnglish, prepareEnglish, readPhrase, type ParseResult } from '../lib/english';
@@ -136,21 +136,12 @@ export function Builder({ strategy: s, onChange, onCode, canUndo, canRedo, onUnd
 
 // ---------------------------------------------------------------------------------------------------------------
 
-interface AiRead {
-  from: string; // the part the rule reader couldn't understand
-  to: string | null; // the AI's rewrite, when the reader understands it
-  reads: string | null; // how the reader understands the rewrite
-  keep: boolean;
-}
-
 function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: Strategy) => void }) {
   const [text, setText] = useState('');
   const [result, setResult] = useState<ParseResult | null>(null);
-  const [source, setSource] = useState('');
-  const [reads, setReads] = useState<AiRead[] | null>(null);
-  const [reading, setReading] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const ai = useAi();
-  const asked = useRef('');
+  const run = useRef(0);
 
   const apply = (r: ParseResult) => {
     setResult(r);
@@ -160,50 +151,29 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
       onApply(r.strategy);
     }
   };
-  const build = (value = text) => {
+
+  // One reader: the quick rules read what they can, and the built-in AI reads the rest in the same step.
+  const build = async (value = text) => {
     if (!value.trim()) return;
-    setReads(null);
-    setSource(value);
-    asked.current = '';
-    apply(parseEnglish(value, strategy));
-  };
-
-  // Parts the reader couldn't understand go to the built-in AI. It starts by itself once the model is on this device.
-  const unknown = result?.unknown ?? [];
-  const askAi = async () => {
-    const key = source + '|' + unknown.join('|');
-    if (asked.current === key) return;
-    asked.current = key;
-    const out: AiRead[] = [];
-    for (const u of unknown) {
-      setReading(u);
-      const to = await ai.rewrite(u);
-      const readsAs = to ? readPhrase(to) : null;
-      out.push({ from: u, to: readsAs ? to : null, reads: readsAs, keep: !!readsAs });
+    const id = ++run.current;
+    const first = parseEnglish(value, strategy);
+    if (!first.unknown.length || !aiDownloaded()) {
+      apply(first);
+      return;
     }
-    setReading(null);
-    setReads(out);
+    setBusy(true);
+    ai.start();
+    let prepared = prepareEnglish(value);
+    for (const u of first.unknown) {
+      const to = await ai.rewrite(u);
+      if (id !== run.current) return;
+      if (to && readPhrase(to)) prepared = prepared.includes(u) ? prepared.replace(u, to.toLowerCase()) : `${prepared}, ${to.toLowerCase()}`;
+    }
+    setBusy(false);
+    apply(parseEnglish(prepared, strategy));
   };
-  useEffect(() => {
-    if (!unknown.length || reads) return;
-    if (ai.state === 'off' && aiDownloaded()) ai.start();
-    if (ai.state !== 'ready') return;
-    const t = setTimeout(() => void askAi(), 0);
-    return () => clearTimeout(t);
-  });
+  const unknown = result?.unknown ?? [];
 
-  const addReads = () => {
-    if (!reads) return;
-    let norm = prepareEnglish(source);
-    for (const r of reads)
-      if (r.keep && r.to) norm = norm.includes(r.from) ? norm.replace(r.from, r.to.toLowerCase()) : `${norm}, ${r.to.toLowerCase()}`;
-    setReads(null);
-    asked.current = source + '|done';
-    apply(parseEnglish(norm, strategy));
-    toast('Rules added');
-  };
-
-  const kept = reads?.filter((r) => r.keep && r.to).length ?? 0;
   return (
     <div className="sec">
       <div className="sec-head">
@@ -222,20 +192,20 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
             placeholder="Buy when RSI is under 30 and price is above the 200 EMA. Sell when RSI crosses above 60. Stop 2 ATR, take profit 8%."
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) build();
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void build();
             }}
           />
           <div className="bar">
             <span className="muted" style={{ fontSize: 12 }}>
-              {ai.state === 'ready' || aiBuiltIn() ? 'Built-in AI · works offline' : 'Works offline'}
+              {busy ? (ai.state === 'loading' && !aiBuiltIn() ? `Starting the AI… ${Math.round(ai.progress * 100)}%` : 'Reading it…') : aiDownloaded() ? 'Built-in AI · works offline' : 'Works offline'}
             </span>
-            <button className="btn gold sm" onClick={() => build()} disabled={!text.trim()}>
-              <Sparkles /> Build rules
+            <button className="btn gold sm" onClick={() => void build()} disabled={!text.trim() || busy}>
+              {busy ? <Brain /> : <Sparkles />} {busy ? 'Reading…' : 'Build rules'}
             </button>
           </div>
         </div>
       </div>
-      {result ? (
+      {result && !busy ? (
         <div className="read">
           <ul>
             {result.understood.map((u) => (
@@ -244,70 +214,29 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
                 {u}
               </li>
             ))}
-            {!reads && !reading
-              ? unknown.map((u) => (
-                  <li key={u} style={{ color: '#8f2236' }}>
-                    <HelpCircle />
-                    Couldn’t read “{u}”.
-                  </li>
-                ))
-              : null}
+            {unknown.map((u) => (
+              <li key={u} style={{ color: '#8f2236' }}>
+                <HelpCircle />
+                Didn’t catch “{u}”. Try saying it another way.
+              </li>
+            ))}
           </ul>
-          {unknown.length && !reads ? (
+          {unknown.length && !aiDownloaded() ? (
             <div className="ai-box">
               <Brain />
-              {(ai.state === 'off' && !aiBuiltIn()) || ai.state === 'error' ? (
-                <div>
-                  <b>Let the built-in AI read {unknown.length === 1 ? 'this part' : `these ${unknown.length} parts`}</b>
-                  <p className="muted">It runs on this device, so nothing leaves your phone. The first time it downloads its model ({aiDownloadSize()}, best on Wi-Fi), then it works offline.</p>
-                  {ai.state === 'error' ? <p style={{ color: '#8f2236' }}>The AI couldn’t start: {ai.error}</p> : null}
-                  <button className="btn gold sm" onClick={ai.start}>
-                    <Brain /> {ai.state === 'error' ? 'Try again' : 'Download and read'}
-                  </button>
-                </div>
-              ) : ai.state === 'loading' ? (
-                <div style={{ flex: 1 }}>
-                  <b>{aiDownloaded() ? 'The built-in AI is reading it…' : `Downloading the built-in AI… ${Math.round(ai.progress * 100)}%`}</b>
+              <div>
+                <b>Turn on the built-in AI to read anything</b>
+                <p className="muted">It runs in this browser, so nothing leaves your device. The phone apps have it built in; here it downloads once ({aiDownloadSize()}).</p>
+                {ai.state === 'error' ? <p style={{ color: '#8f2236' }}>The AI couldn’t start: {ai.error}</p> : null}
+                {ai.state === 'loading' ? (
                   <div className="progress" style={{ marginTop: 8 }}>
                     <i style={{ width: `${Math.round(ai.progress * 100)}%` }} />
                   </div>
-                </div>
-              ) : (
-                <div>
-                  <b>Reading “{reading ?? unknown[0]}”…</b>
-                  <p className="muted">The built-in AI is working on this device.</p>
-                </div>
-              )}
-            </div>
-          ) : null}
-          {reads ? (
-            <div className="ai-box col">
-              <b>
-                <Brain /> Check how the AI read it
-              </b>
-              {reads.map((r, i) => (
-                <label key={r.from} className={`ai-read${r.to ? '' : ' bad'}`}>
-                  <input type="checkbox" checked={r.keep} disabled={!r.to} onChange={(e) => setReads(reads.map((x, j) => (j === i ? { ...x, keep: e.target.checked } : x)))} />
-                  <span>
-                    <span className="muted">“{r.from}”</span>
-                    <br />
-                    {r.reads ? (
-                      <b>{r.reads}</b>
-                    ) : (
-                      <span style={{ color: '#8f2236' }}>
-                        <AlertTriangle /> Couldn’t work this one out. Try other words.
-                      </span>
-                    )}
-                  </span>
-                </label>
-              ))}
-              <div className="bar">
-                <button className="btn ghost sm" onClick={() => setReads([])}>
-                  Skip
-                </button>
-                <button className="btn gold sm" onClick={addReads} disabled={!kept}>
-                  <Check /> Add {kept} {kept === 1 ? 'rule' : 'rules'}
-                </button>
+                ) : (
+                  <button className="btn gold sm" onClick={ai.start}>
+                    <Brain /> {ai.state === 'error' ? 'Try again' : 'Turn it on'}
+                  </button>
+                )}
               </div>
             </div>
           ) : null}
@@ -320,7 +249,7 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
               title={e}
               onClick={() => {
                 setText(e);
-                build(e);
+                void build(e);
               }}
             >
               {['RSI dip with ATR stop', 'EMA cross, long & short', 'Breakout with 2 targets'][i]}
