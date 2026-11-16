@@ -210,6 +210,14 @@ const PATTERNS: [RegExp, string][] = [
 
 type Node = Rule | RuleGroup;
 
+/** True when words name the market itself rather than an indicator: "asset", "the stock", "usd/jpy", "nvda", "it". */
+function isSubject(words: string): boolean {
+  const w = words.trim().replace(/^(?:the|this|that|my|our|your)\s+/, '');
+  if (!w || w.split(/\s+/).length > 4 || /\d/.test(w.replace(/[a-z]+\/?[a-z]*/g, '')) && /\d/.test(w)) return false;
+  if (parseOperand(w)) return false;
+  return !/\b(?:rsi|macd|ema|sma|wma|hma|vwap|atr|adx|cci|mfi|roc|stoch|stochastic|bollinger|band|bands|volume|supertrend|sar|average|line|signal|histogram|high|low|open)\b/.test(w);
+}
+
 /** Rewrites everyday trader phrasing into the forms below: "bitcoin hits the lower band" → "price crosses below lower band". */
 function everyday(input: string): string {
   let s = input
@@ -316,7 +324,8 @@ function condition(raw: string): Node | null {
     // "price crosses above ema" with no period on either side → the indicator's default
     if (a?.kind === 'ind' && b) return rule(a, cmp, b, within ? { within } : {});
     // "close is above 200 ema of high" etc. handled by parseOperand; left unknown → try implied price.
-    if (!a && b && /^(?:it|price|the price)$/.test(left.trim())) return rule(ind('price'), cmp, b);
+    // Anything else on the left that isn't an indicator is the thing being traded: "asset", "usd/jpy", "aapl", "my coin".
+    if (!a && b && isSubject(left)) return rule(ind('price'), cmp, b, within ? { within } : {});
   }
   return null;
 }
@@ -445,6 +454,81 @@ export function normalizeEnglish(input: string): string {
     .replace(/\s+/g, ' ');
 }
 
+/**
+ * Turns the many ways traders say things into the forms the reader knows, before anything is split up.
+ * Each line is one family of phrasing; the tests in english-anything.test.ts hold real sentences for each.
+ */
+function phrasebook(text: string): string {
+  const R: [RegExp, string][] = [
+    // filler and word numbers
+    [/^\s*(?:i want to|i'd like to|i would like to|i wanna|i'll|i will|please|let's|lets|we|you should|should)\s+/g, ' '],
+    [/\bzero\b/g, '0'], [/\bten\b/g, '10'], [/\btwenty\b/g, '20'], [/\bthirty\b/g, '30'], [/\bfifty\b/g, '50'], [/\bseventy\b/g, '70'], [/\beighty\b/g, '80'],
+    [/\b(\d+) ?(sma|ema|wma|hma|ma)\b/g, '$1 $2'],
+    [/\b(\d+) (?:ma|moving average)\b/g, '$1 sma'],
+    // the order a trader says it in
+    [/(^|, )\s*when (.+?),? (buy|sell|short|go long|go short)\s*(?=,|$)/g, '$1$3 when $2'],
+    [/\b(?:enter|open|take|start|go)(?: into)? (?:a |an )?(long|short)(?: position| trade)?(?= when| if)/g, '$1'],
+    [/\b(?:sell|close|exit|get out of|dump)(?: of)? (?:my|the|our|this) (?:position|trade|long|bag|shares?|coins?)(?= when| if)/g, 'sell'],
+    [/\b(long|buy) above (the [^,]+?|[a-z]+ \d+), (short|sell) below (?:it|that)\b/g, 'buy when price is above $2, short when price is below $2'],
+    [/(^|, )\s*(long|buy|short|sell) (above|below|over|under) /g, '$1$2 when price is $3 '],
+    // "above it" means the average named earlier in the same sentence
+    [/\b((?:sma|ema|wma|hma|ma) \d+|\d+ (?:sma|ema|wma|hma|ma|day sma|day ema)|vwap)\b([^,]*?) (above|below|over|under) (?:it|that)\b/g, '$1$2 $3 $1'],
+    // "rsi is over 50 and rising"
+    [/\b((?:the )?[a-z%]+(?: \d+)?) is (above|below|over|under) (\d+(?:\.\d+)?) and (rising|falling)\b/g, '$1 is $2 $3 and $1 is $4'],
+    // volume multiples
+    [/\bvolume is (?:twice|double) (?:the )?(?:average|avg|normal)(?: volume)?\b/g, 'relative volume is above 2'],
+    [/\bvolume is (\d+(?:\.\d+)?)x? (?:times )?(?:the )?(?:average|avg|normal)(?: volume)?\b/g, 'relative volume is above $1'],
+    [/\bbreaks? (?:out )?(?:above |over )?(?=the |\d)/g, 'crosses above '],
+    // sentence starts
+    [/\b(buy|go long|long|enter long|sell|short|go short|exit|cover)( the dip)? (?:after(?! \d)|as soon as|once|whenever|every time)\b/g, '$1 when'],
+    [/\bbuy the dip\b/g, 'buy'],
+    [/\b(buy|go long|long|enter long|short|go short) after (?=\d+ (?:red|green|up|down|white|black|rising|falling|higher|lower) )/g, '$1 when '],
+    [/\b(?:price |it |the price )?gaps? up\b/g, 'open is above the 1 bar high'],
+    [/\b(?:price |it |the price )?gaps? down\b/g, 'open is below the 1 bar low'],
+    [/\band (?=(?:sell|short|go short|exit|close|cover|take profit)\b)/g, ', '],
+    // states
+    [/\b(?:it'?s|it is|its) overbought\b/g, 'rsi is above 70'],
+    [/\b(?:it'?s|it is|its) oversold\b/g, 'rsi is below 30'],
+    [/\brsi (?:is |gets |goes |becomes )?oversold\b/g, 'rsi is below 30'],
+    [/\brsi (?:is |gets |goes |becomes )?overbought\b/g, 'rsi is above 70'],
+    [/ (?:in|during) an? (?:up ?trend|bull(?:ish)? (?:trend|market))\b/g, ' and close is above sma 200'], [/\b(?:the )?trend is (?:up|bullish)\b|\buptrend\b/g, 'close is above sma 200'],
+    [/ (?:in|during) an? (?:down ?trend|bear(?:ish)? (?:trend|market))\b/g, ' and close is below sma 200'], [/\b(?:the )?trend is (?:down|bearish)\b|\bdowntrend\b/g, 'close is below sma 200'],
+    [/\bmomentum is (?:strong|high)\b|\bstrong trend\b/g, 'adx 14 is above 25'],
+    [/\bmomentum is (?:weak|low)\b/g, 'adx 14 is below 20'],
+    [/\bmomentum (?:is|turns|goes) (?:positive|up|bullish)\b/g, 'roc 10 crosses above 0'],
+    [/\bmomentum (?:is|turns|goes) (?:negative|down|bearish)\b/g, 'roc 10 crosses below 0'],
+    [/\bmacd (?:turns|goes|flips|is|becomes) (?:positive|bullish|green)\b|\bmacd histogram (?:turns|flips|goes) (?:positive|green)\b/g, 'macd histogram crosses above 0'],
+    [/\bmacd (?:turns|goes|flips|is|becomes) (?:negative|bearish|red)\b|\bmacd histogram (?:turns|flips|goes) (?:negative|red)\b/g, 'macd histogram crosses below 0'],
+    // moves
+    [/\b(?:slopes|is sloping|points|is pointing|angles|turns|curls) (?:up|upward|higher)\b/g, 'is rising'],
+    [/\b(?:slopes|is sloping|points|is pointing|angles|turns|curls) (?:down|downward|lower)\b/g, 'is falling'],
+    [/\b(price|close|it) (?:goes|moves|ticks|heads|is going|is moving) (?:up|higher)\b/g, 'close is rising'],
+    [/\b(price|close|it) (?:goes|moves|ticks|heads|is going|is moving) (?:down|lower)\b/g, 'close is falling'],
+    [/\b(?:the price |price |it )?makes? an? (?:higher|new) high\b/g, 'high is rising'],
+    [/\b(?:the price |price |it )?makes? an? (?:lower|new) low\b/g, 'low is falling'],
+    [/\b(?:pulls? back|retraces?|dips?) (?:to|into|toward|towards) /g, 'crosses below '],
+    [/\b(?:bounces?|rebounds?) (?:off|from|of) /g, 'crosses above '],
+    [/\b(?:rejects?|gets rejected (?:at|by|from)|fails at) /g, 'crosses below '],
+    [/\bcross(?:es|ed)? (?:up)(?: (?:from )?(?:below|under))? (\d)/g, 'crosses above $1'],
+    [/\bcross(?:es|ed)? (?:down)(?: (?:from )?(?:above|over))? (\d)/g, 'crosses below $1'],
+    [/\bcross(?:es|ed)? up\b/g, 'crosses above'],
+    [/\bcross(?:es|ed)? down\b/g, 'crosses below'],
+    // "x crosses y" with no direction means crossing above
+    [/\bcross(?:es|ed) (?!above|below|over|under|up|down|back)/g, 'crosses above '],
+    // fast and slow averages, bare "the 50" next to "the 200"
+    [/\bfast (ema|sma|ma|moving average)\b/g, '$1 9'],
+    [/\bslow (ema|sma|ma|moving average)\b/g, '$1 21'],
+    [/\bthe (\d{1,3})(?: day| period| bar)?(?= crosses| is above| is below| and| ,|$| crosses)/g, 'sma $1'],
+    [/(crosses (?:above|below)|is (?:above|below)) the (\d{1,3})(?: day| period| bar)?(?=\s*(?:,|$|\s(?:and|or|then|sell|buy)))/g, '$1 sma $2'],
+    // earlier bars
+    [/\b(?:yesterday'?s|the previous|the prior|the last|previous|prior|last) (?:day'?s |candle'?s |bar'?s )?(high|low)\b/g, 'the 1 bar $1'],
+    // risk
+    [/\btrail(?:ing)? (?:the |my )?stop(?: loss)? (?:at|by|of)? ?/g, 'trailing stop '],
+  ];
+  for (const [re, to] of R) text = text.replace(re, to);
+  return text.replace(/\s+/g, ' ');
+}
+
 /** Reads one condition on its own: the rules it makes, or null when it can't be read. */
 export function readCondition(text: string): string | null {
   const r = parseEnglish(`Buy when ${text}.`);
@@ -463,7 +547,7 @@ export function parseEnglish(input: string, base?: Strategy): ParseResult {
   const understood: string[] = [];
   const unknown: string[] = [];
 
-  let text = normalizeEnglish(input);
+  let text = phrasebook(normalizeEnglish(input));
   text = extractRisk(text, s, understood);
 
   // Find section starts, then give each section the text up to the next one.

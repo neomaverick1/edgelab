@@ -1,0 +1,113 @@
+import { describe, expect, it } from 'vitest';
+
+import { describe as describeStrategy, parseEnglish } from './english';
+
+// Real phrasing from traders: every one of these must read with nothing left over.
+const SENTENCES = [
+  'Buy when asset closes above the 25 sma',
+  'buy when it closes above the 25 sma',
+  'Buy when USD/JPY closes above the 50 ema',
+  'buy when aapl crosses above the 200 day moving average',
+  'go long when the stock closes above the 20 sma',
+  'buy when bitcoin is above the 200 ema and rsi is under 30',
+  'enter when the pair breaks above the upper bollinger band',
+  'sell when the asset closes below the 25 sma',
+  'buy when gold is over the 50 sma',
+  'buy if price closes above the 9 ema. sell if price closes below the 9 ema',
+  'long when nvda crosses over the 50 sma, exit when it crosses under the 50 sma',
+  'buy when my coin is above the 100 sma',
+  'buy when eur/usd closes above the 20 ema and macd crosses above the signal line',
+  'buy when the market closes above vwap',
+  'buy when spy closes above the 10 sma. stop 2%. take profit 6%',
+  'buy when the 9 ema crosses the 21 ema',
+  'buy when the fast ema crosses the slow ema',
+  'buy the dip when rsi drops below 30',
+  'buy when rsi is oversold and sell when its overbought',
+  'buy when price pulls back to the 20 ema in an uptrend',
+  'buy when price bounces off the 50 sma',
+  'short when price rejects the 200 ema',
+  'buy when macd turns positive',
+  'buy when the macd histogram flips green',
+  'buy on a breakout above the 20 day high',
+  'sell when price closes under yesterdays low',
+  'buy when volume spikes and price goes up',
+  'buy when price is above vwap and rsi above 50',
+  'buy when stochastic crosses up below 20',
+  'buy when price makes a higher high',
+  'buy after 3 red candles in a row',
+  'buy when atr is rising',
+  'buy when adx is above 25 and price is above the 50 ema',
+  'go short when price breaks below the lower bollinger band',
+  'buy when the price touches the lower band',
+  'buy when the 50 crosses above the 200',
+  'buy when the 50 day crosses the 200 day',
+  'enter long when rsi(14) < 30',
+  'exit when rsi > 70',
+  'buy when close > sma(25)',
+  'stop loss at 1.5 atr and take profit at 3 atr',
+  'trail the stop at 2 atr',
+  'buy when the candle closes green above the 20 ema',
+  'buy when supertrend turns green',
+  'sell when supertrend flips red',
+  'buy when price crosses above the parabolic sar',
+  'buy when momentum is strong',
+  'buy when the trend is up and rsi dips under 40',
+  'buy when the 20 sma is rising',
+  'buy when price gaps up',
+  'buy when the 200 sma slopes up and price is above it',
+  'buy when the asset is trading above its 50 day average',
+  'I want to buy when the price closes above the 25 day sma',
+  'Buy when the close is higher than the 25 sma',
+  'purchase when price is above the 25 sma',
+  'buy if the asset trades above its 25 sma',
+  'buy when price breaks the 50 ema',
+  'buy when the 10 sma is above the 30 sma',
+  'when price closes above the 20 ema buy',
+  'enter a long position when rsi goes under 30',
+  'get out when rsi goes above 70',
+  'sell my position when price drops below the 50 sma',
+  'buy when the stock price is higher than the 200 sma',
+  'buy when bitcoin rallies above the 100 ema',
+  'Short when the market falls below the 50 day moving average',
+  'buy when rsi is below 30 or price touches the lower band',
+  'buy when the ema 9 is above the ema 21',
+  'buy when close crosses over sma 25',
+  'buy whenever price is above the 25 sma',
+  'buy when price is trading above the 25 simple moving average',
+  'buy when price closes above the 25 period simple moving average',
+  'buy when price is above the 25 exponential moving average',
+  'buy when the macd line is above zero',
+  'buy when the rsi is over 50 and rising',
+  'sell when the rsi falls under 50',
+  'buy when price is above the cloud',
+  'take profit at 10% and stop loss at 5%',
+  'buy when volume is twice the average',
+  'long above the 25 sma, short below it',
+  'buy when price is above the 25ma',
+];
+
+describe('reads everyday sentences', () => {
+  it.each(SENTENCES)('%s', (t) => {
+    const r = parseEnglish(t);
+    expect(r.unknown, t).toEqual([]);
+    expect(r.strategy.longEntry.items.length + r.strategy.shortEntry.items.length + r.strategy.longExit.items.length + r.strategy.shortExit.items.length).toBeGreaterThan(0);
+  });
+});
+
+// Each sentence and what it must turn into.
+const MEANS: [string, string][] = [
+  ['Buy when asset closes above the 25 sma', 'Buy when Close crosses above SMA 25.'],
+  ['buy when the fast ema crosses the slow ema', 'Buy when EMA 9 crosses above EMA 21.'],
+  ['buy when rsi is oversold and sell when its overbought', 'Buy when RSI 14 is below 30. Sell when RSI 14 is above 70.'],
+  ['buy when price pulls back to the 20 ema in an uptrend', 'Buy when Close crosses below EMA 20 and Close is above SMA 200.'],
+  ['buy when the 50 crosses above the 200', 'Buy when SMA 50 crosses above SMA 200.'],
+  ['when price closes above the 20 ema buy', 'Buy when Close crosses above EMA 20.'],
+  ['sell my position when price drops below the 50 sma', 'Sell when Close crosses below SMA 50.'],
+  ['long above the 25 sma, short below it', 'Buy when Close is above SMA 25. Short when Close is below SMA 25.'],
+  ['buy when the 200 sma slopes up and price is above it', 'Buy when SMA 200 is rising and Close is above SMA 200.'],
+  ['buy when the rsi is over 50 and rising', 'Buy when RSI 14 is above 50 and RSI 14 is rising.'],
+  ['exit after 15 bars. buy after 3 red candles in a row', 'Buy when 3 down closes in a row.'],
+];
+describe('reads them right', () => {
+  it.each(MEANS)('%s', (t, want) => expect(describeStrategy(parseEnglish(t).strategy).startsWith(want), describeStrategy(parseEnglish(t).strategy)).toBe(true));
+});
