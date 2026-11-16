@@ -1,184 +1,227 @@
 import { describe, expect, it } from 'vitest';
 
-import { buyAndHold, runBacktest } from './engine';
-import { strategyById, type Signals } from './strategies';
-import type { Candle, Settings } from './types';
+import { inputsOf } from './catalog';
+import { runBacktest } from './engine';
+import { computeStats } from './metrics';
+import { blankStrategy, evaluate, group, ind, num, rule, type Signals, type Strategy } from './rules';
+import type { Candle } from './types';
 
 const DAY = 86_400;
-const bars = (rows: [number, number, number, number][]): Candle[] =>
-  rows.map(([open, high, low, close], i) => ({ time: i * DAY, open, high, low, close, volume: 1 }));
+const bars = (rows: [number, number, number, number][]): Candle[] => rows.map(([o, h, l, c], i) => ({ time: i * DAY, open: o, high: h, low: l, close: c, volume: 1000 }));
+const flat = (n: number, p = 100): [number, number, number, number][] => Array.from({ length: n }, () => [p, p, p, p]);
 
-function signals(n: number, at: Partial<Record<'long' | 'exitLong' | 'short' | 'exitShort', number[]>>): Signals {
-  const mark = (idx: number[] = []) => Array.from({ length: n }, (_, i) => idx.includes(i));
-  return { long: mark(at.long), exitLong: mark(at.exitLong), short: mark(at.short), exitShort: mark(at.exitShort), overlays: [] };
+/** Signals from explicit bar indices instead of indicators. */
+function signals(n: number, s: Partial<Record<'longEntry' | 'longExit' | 'shortEntry' | 'shortExit', number[]>>, atrValue = 2): Signals {
+  const arr = (idx: number[] = []) => {
+    const a = new Uint8Array(n);
+    idx.forEach((i) => (a[i] = 1));
+    return a;
+  };
+  return {
+    longEntry: arr(s.longEntry),
+    longExit: arr(s.longExit),
+    shortEntry: arr(s.shortEntry),
+    shortExit: arr(s.shortExit),
+    filter: new Uint8Array(n).fill(1),
+    atr: new Array(n).fill(atrValue),
+    plots: [],
+    warmup: 0,
+  };
 }
 
-const free: Settings = {
-  capital: 1000,
-  sizePct: 100,
-  feePct: 0,
-  slippagePct: 0,
-  stopPct: 0,
-  takeProfitPct: 0,
-  trailPct: 0,
-  direction: 'long',
-  trendFilter: 0,
-};
+function strat(edit: (s: Strategy) => void = () => {}): Strategy {
+  const s = blankStrategy();
+  s.costs = { capital: 10_000, feePct: 0, slippagePct: 0 };
+  edit(s);
+  return s;
+}
 
-describe('backtest engine', () => {
-  const c = bars([
-    [100, 101, 99, 100],
-    [100, 105, 99, 104], // buy signal at this close
-    [105, 110, 104, 108], // filled at this open: 105
-    [108, 112, 107, 110], // sell signal at this close
-    [111, 113, 109, 112], // filled at this open: 111
-  ]);
-
-  it('fills signals at the next open, never at the signal bar', () => {
-    const bt = runBacktest(c, signals(5, { long: [1], exitLong: [3] }), free, 0, 4);
+describe('engine basics', () => {
+  it('fills a signal at the next open and closes on the exit signal', () => {
+    const c = bars([...flat(2), [100, 101, 99, 100], [110, 111, 109, 110], [120, 121, 119, 120], [130, 131, 129, 130]]);
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1], longExit: [3] }), strat(), { start: 0, end: c.length - 1 });
     expect(bt.trades).toHaveLength(1);
     const t = bt.trades[0];
-    expect([t.entryIndex, t.entryPrice, t.exitIndex, t.exitPrice, t.reason, t.bars]).toEqual([2, 105, 4, 111, 'signal', 2]);
-    expect(t.pnl).toBeCloseTo((6 * 1000) / 105, 9);
-    expect(bt.equity[2]).toBeCloseTo((1000 / 105) * 108, 9);
-    expect(bt.equity[4]).toBeCloseTo(1000 + t.pnl, 9);
-    expect(bt.position).toEqual([0, 0, 1, 1, 0]);
+    expect(t.entryIndex).toBe(2);
+    expect(t.entryPrice).toBe(100);
+    expect(t.exitIndex).toBe(4);
+    expect(t.exitPrice).toBe(120);
+    expect(t.pnl).toBeCloseTo(2000);
+    expect(t.reason).toBe('signal');
+    expect(bt.equity[bt.equity.length - 1]).toBeCloseTo(12_000);
   });
 
-  it('charges fees and slippage on both sides, and trade P&L matches the account', () => {
-    const s = { ...free, feePct: 0.1, slippagePct: 0.1 };
-    const bt = runBacktest(c, signals(5, { long: [1], exitLong: [3] }), s, 0, 4);
+  it('charges fees and slippage on both sides', () => {
+    const c = bars([...flat(2), [100, 100, 100, 100], [100, 100, 100, 100], [100, 100, 100, 100]]);
+    const s = strat((x) => (x.costs = { capital: 10_000, feePct: 0.1, slippagePct: 0.1 }));
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1], longExit: [2] }), s, { start: 0, end: c.length - 1 });
+    expect(bt.trades[0].pnl).toBeLessThan(0);
+    expect(bt.fees).toBeGreaterThan(19);
+    expect(bt.slippage).toBeGreaterThan(19);
+  });
+});
+
+describe('stops and targets', () => {
+  it('exits at the stop price inside the bar', () => {
+    const c = bars([...flat(2), [100, 101, 99, 100], [100, 100, 90, 92], [92, 93, 91, 92]]);
+    const s = strat((x) => (x.exits.stop = { on: true, unit: 'pct', value: 5 }));
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1] }), s, { start: 0, end: c.length - 1 });
+    expect(bt.trades[0].reason).toBe('stop');
+    expect(bt.trades[0].exitPrice).toBeCloseTo(95);
+    expect(bt.trades[0].pnl).toBeCloseTo(-500);
+    expect(bt.trades[0].r).toBeCloseTo(-1);
+  });
+
+  it('fills at the open when the market gaps through the stop', () => {
+    const c = bars([...flat(2), [100, 101, 99, 100], [80, 82, 79, 81], [81, 81, 81, 81]]);
+    const s = strat((x) => (x.exits.stop = { on: true, unit: 'pct', value: 5 }));
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1] }), s, { start: 0, end: c.length - 1 });
+    expect(bt.trades[0].exitPrice).toBe(80);
+  });
+
+  it('uses ATR stops measured at entry', () => {
+    const c = bars([...flat(2), [100, 101, 99, 100], [100, 100, 95, 96], [96, 96, 96, 96]]);
+    const s = strat((x) => (x.exits.stop = { on: true, unit: 'atr', value: 2 }));
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1] }, 2), s, { start: 0, end: c.length - 1 });
+    expect(bt.trades[0].exitPrice).toBeCloseTo(96);
+  });
+
+  it('scales out at each take-profit level', () => {
+    const c = bars([...flat(2), [100, 101, 99, 100], [100, 106, 99, 105], [105, 111, 104, 110], [110, 110, 110, 110]]);
+    const s = strat((x) => {
+      x.exits.targets = {
+        on: true,
+        levels: [
+          { unit: 'pct', value: 5, size: 50 },
+          { unit: 'pct', value: 10, size: 50 },
+        ],
+      };
+    });
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1] }), s, { start: 0, end: c.length - 1 });
     const t = bt.trades[0];
-    expect(t.entryPrice).toBeCloseTo(105 * 1.001, 9);
-    expect(t.exitPrice).toBeCloseTo(111 * 0.999, 9);
-    expect(bt.equity[4] - 1000).toBeCloseTo(t.pnl, 9);
-    expect(bt.fees).toBeCloseTo(t.fees, 9);
-    expect(bt.slippage).toBeCloseTo(t.qty * (105 * 0.001 + 111 * 0.001), 9);
-    expect(t.pnl).toBeLessThan((6 * 1000) / 105);
+    expect(t.fills).toHaveLength(2);
+    expect(t.fills[0].price).toBeCloseTo(105);
+    expect(t.fills[0].qty).toBeCloseTo(50);
+    expect(t.fills[1].price).toBeCloseTo(110);
+    expect(t.pnl).toBeCloseTo(50 * 5 + 50 * 10);
+    expect(t.reason).toBe('take-profit');
   });
 
-  const stopBars = (second: [number, number, number, number]) =>
-    bars([
-      [100, 100, 100, 100], // buy signal
-      [100, 101, 96, 97], // filled at 100; stop at 95 not touched
-      second,
-    ]);
-
-  it('stops out inside the bar at the stop price', () => {
-    const bt = runBacktest(stopBars([97, 98, 94, 95]), signals(3, { long: [0] }), { ...free, stopPct: 5 }, 0, 2);
-    expect(bt.trades[0]).toMatchObject({ exitIndex: 2, exitPrice: 95, reason: 'stop', bars: 2 });
+  it('assumes the stop came first when a bar touches both', () => {
+    const c = bars([...flat(2), [100, 101, 99, 100], [100, 111, 89, 100], [100, 100, 100, 100]]);
+    const s = strat((x) => {
+      x.exits.stop = { on: true, unit: 'pct', value: 10 };
+      x.exits.targets = { on: true, levels: [{ unit: 'pct', value: 10, size: 100 }] };
+    });
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1] }), s, { start: 0, end: c.length - 1 });
+    expect(bt.trades[0].reason).toBe('stop');
   });
 
-  it('fills at the open when price gaps through the stop', () => {
-    const bt = runBacktest(stopBars([90, 92, 88, 91]), signals(3, { long: [0] }), { ...free, stopPct: 5 }, 0, 2);
-    expect(bt.trades[0]).toMatchObject({ exitPrice: 90, reason: 'stop' });
+  it('trails the highest high since entry', () => {
+    const c = bars([...flat(2), [100, 100, 100, 100], [100, 120, 100, 119], [119, 119, 107, 108], [108, 108, 108, 108]]);
+    const s = strat((x) => (x.exits.trail = { on: true, unit: 'pct', value: 10, activate: 0 }));
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1] }), s, { start: 0, end: c.length - 1 });
+    expect(bt.trades[0].reason).toBe('trailing-stop');
+    expect(bt.trades[0].exitPrice).toBeCloseTo(108);
   });
 
-  it('takes profit at the target without slippage (a limit order)', () => {
-    const s = { ...free, takeProfitPct: 10, slippagePct: 0.1 };
-    const bt = runBacktest(stopBars([102, 112, 101, 111]), signals(3, { long: [0] }), s, 0, 2);
-    expect(bt.trades[0].reason).toBe('take-profit');
-    expect(bt.trades[0].exitPrice).toBeCloseTo(100 * 1.001 * 1.1, 9);
+  it('moves the stop to breakeven after the trigger', () => {
+    const c = bars([...flat(2), [100, 100, 100, 100], [100, 106, 100, 104], [104, 104, 99, 99], [99, 99, 99, 99]]);
+    const s = strat((x) => {
+      x.exits.stop = { on: true, unit: 'pct', value: 10 };
+      x.exits.breakeven = { on: true, unit: 'pct', value: 5 };
+    });
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1] }), s, { start: 0, end: c.length - 1 });
+    expect(bt.trades[0].reason).toBe('breakeven');
+    expect(bt.trades[0].exitPrice).toBeCloseTo(100);
   });
 
-  it('assumes the stop came first when a bar touches both levels', () => {
-    const s = { ...free, stopPct: 5, takeProfitPct: 10 };
-    const bt = runBacktest(stopBars([100, 115, 90, 100]), signals(3, { long: [0] }), s, 0, 2);
-    expect(bt.trades[0]).toMatchObject({ exitPrice: 95, reason: 'stop' });
+  it('closes after the time limit', () => {
+    const c = bars(flat(10));
+    const s = strat((x) => (x.exits.time = { on: true, bars: 3 }));
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1] }), s, { start: 0, end: c.length - 1 });
+    expect(bt.trades[0].reason).toBe('time');
+    expect(bt.trades[0].entryIndex).toBe(2);
+    expect(bt.trades[0].exitIndex).toBe(5);
+  });
+});
+
+describe('direction, sizing and leverage', () => {
+  it('shorts and reverses on the opposite signal', () => {
+    const c = bars([...flat(2), [100, 100, 100, 100], [90, 90, 90, 90], [80, 80, 80, 80], [90, 90, 90, 90], [100, 100, 100, 100]]);
+    const s = strat((x) => (x.side = 'both'));
+    const bt = runBacktest(c, signals(c.length, { shortEntry: [1], longEntry: [3] }), s, { start: 0, end: c.length - 1 });
+    expect(bt.trades[0].side).toBe('short');
+    expect(bt.trades[0].reason).toBe('reverse');
+    expect(bt.trades[0].pnl).toBeCloseTo(10_000 * 0.2);
+    expect(bt.trades[1].side).toBe('long');
   });
 
-  it('trails the stop below the highest high since entry', () => {
-    const c2 = bars([
-      [100, 100, 100, 100],
-      [100, 120, 99, 118], // high 120 lifts the stop to 108
-      [115, 116, 107, 109],
-    ]);
-    const bt = runBacktest(c2, signals(3, { long: [0] }), { ...free, trailPct: 10 }, 0, 2);
-    expect(bt.trades[0]).toMatchObject({ exitPrice: 108, reason: 'trailing-stop' });
+  it('sizes by risk when a stop is set', () => {
+    const c = bars([...flat(2), [100, 100, 100, 100], [100, 100, 100, 100]]);
+    const s = strat((x) => {
+      x.sizing = { ...x.sizing, mode: 'risk', value: 1, leverage: 10 };
+      x.exits.stop = { on: true, unit: 'pct', value: 2 };
+    });
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1] }), s, { start: 0, end: c.length - 1 });
+    // risk $100 with a $2 stop distance → 50 units → $5,000 notional
+    expect(bt.trades[0].qty).toBeCloseTo(50);
   });
 
-  const falling = bars([
-    [100, 100, 100, 100], // short signal
-    [100, 101, 90, 92], // short at 100
-    [92, 93, 84, 85], // cover signal
-    [80, 82, 78, 79], // covered at 80
-  ]);
-
-  it('trades shorts in long & short mode', () => {
-    const s: Settings = { ...free, direction: 'both' };
-    const bt = runBacktest(falling, signals(4, { short: [0], exitShort: [2] }), s, 0, 3);
-    expect(bt.trades[0]).toMatchObject({ side: 'short', entryPrice: 100, exitPrice: 80 });
-    expect(bt.trades[0].pnl).toBeCloseTo(200, 9);
-    expect(bt.equity[2]).toBeCloseTo(2000 - 10 * 85, 9);
-    expect(bt.position).toEqual([0, -1, -1, 0]);
+  it('caps size at the leverage limit', () => {
+    const c = bars([...flat(2), [100, 100, 100, 100], [100, 100, 100, 100]]);
+    const s = strat((x) => (x.sizing = { ...x.sizing, mode: 'equity', value: 500, leverage: 2 }));
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1] }), s, { start: 0, end: c.length - 1 });
+    expect(bt.trades[0].qty).toBeCloseTo(200);
   });
 
-  it('liquidates a short before the account goes below zero', () => {
-    const rising = bars([
-      [100, 100, 100, 100], // short signal
-      [100, 150, 99, 140], // short at 100
-      [140, 260, 139, 250], // the account would be gone at 200
-      [250, 255, 245, 250],
-    ]);
-    const s: Settings = { ...free, direction: 'both' };
-    const bt = runBacktest(rising, signals(4, { short: [0], long: [2] }), s, 0, 3);
-    expect(bt.trades).toHaveLength(1);
-    expect(bt.trades[0]).toMatchObject({ side: 'short', exitPrice: 200, reason: 'liquidated' });
-    expect(bt.equity.slice(2)).toEqual([0, 0]);
+  it('liquidates a leveraged long that loses the whole account', () => {
+    const c = bars([...flat(2), [100, 100, 100, 100], [100, 100, 40, 45], [45, 45, 45, 45]]);
+    const s = strat((x) => (x.sizing = { ...x.sizing, mode: 'equity', value: 300, leverage: 3 }));
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1] }), s, { start: 0, end: c.length - 1 });
+    expect(bt.trades[0].reason).toBe('liquidated');
+    expect(bt.equity[bt.equity.length - 1]).toBeCloseTo(0, 6);
   });
 
-  it('ignores short signals in long-only mode', () => {
-    const bt = runBacktest(falling, signals(4, { short: [0], exitShort: [2] }), free, 0, 3);
+  it('scales into a winner', () => {
+    const c = bars([...flat(2), [100, 100, 100, 100], [105, 105, 105, 105], [110, 110, 110, 110], [120, 120, 120, 120]]);
+    const s = strat((x) => {
+      x.sizing = { ...x.sizing, mode: 'equity', value: 50, leverage: 2, scaleIn: { on: true, max: 1, size: 100, onlyInProfit: true } };
+    });
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1, 3] }), s, { start: 0, end: c.length - 1 });
+    expect(bt.trades[0].adds).toBe(1);
+    expect(bt.trades[0].entryPrice).toBeGreaterThan(100);
+  });
+
+  it('keeps a live position open when asked', () => {
+    const c = bars(flat(6));
+    const bt = runBacktest(c, signals(c.length, { longEntry: [1] }), strat(), { start: 0, end: c.length - 1, keepOpen: true });
     expect(bt.trades).toHaveLength(0);
-    expect(bt.equity.every((v) => v === 1000)).toBe(true);
+    expect(bt.open?.side).toBe('long');
+  });
+});
+
+describe('rules and stats end to end', () => {
+  it('evaluates crosses, groups and the filter', () => {
+    const closes = [10, 10, 10, 10, 10, 12, 14, 16, 12, 8, 6, 6, 6, 9, 12, 15];
+    const c = bars(closes.map((x) => [x, x, x, x]));
+    const s = strat((x) => {
+      x.longEntry = group('all', [rule(ind('price'), 'xup', ind('sma', [3]))]);
+      x.longExit = group('any', [rule(ind('price'), 'xdn', ind('sma', [3])), rule(ind('price'), 'lt', num(5))]);
+    });
+    const sig = evaluate(s, inputsOf(c));
+    expect([...sig.longEntry].map((v, i) => (v ? i : -1)).filter((i) => i >= 0)).toEqual([5, 13]);
+    const bt = runBacktest(c, sig, s, { start: sig.warmup, end: c.length - 1 });
+    const st = computeStats(bt, c, DAY, 10_000);
+    expect(st.trades).toBe(2);
+    expect(Number.isFinite(st.sharpe)).toBe(true);
   });
 
-  it('reverses from long to short on an opposite signal', () => {
-    const s: Settings = { ...free, direction: 'both' };
-    const bt = runBacktest(c, signals(5, { long: [0], short: [2], exitLong: [2] }), s, 0, 4);
-    expect(bt.trades.map((t) => [t.side, t.entryIndex, t.exitIndex, t.reason])).toEqual([
-      ['long', 1, 3, 'signal'],
-      ['short', 3, 4, 'end'],
-    ]);
-  });
-
-  it('skips entries against the trend filter', () => {
-    const down = bars([
-      [10, 10, 10, 10],
-      [9, 9, 9, 9],
-      [8, 8, 8, 8], // close 8 is below the 3-bar SMA (9)
-      [8, 8, 8, 8],
-    ]);
-    const bt = runBacktest(down, signals(4, { long: [2] }), { ...free, trendFilter: 3 }, 0, 3);
-    expect(bt.trades).toHaveLength(0);
-  });
-
-  it('closes a position that is still open on the last bar', () => {
-    const bt = runBacktest(c, signals(5, { long: [1] }), free, 0, 4);
-    expect(bt.trades[0]).toMatchObject({ exitIndex: 4, exitPrice: 112, reason: 'end' });
-  });
-
-  it('never looks ahead: changing later bars does not change earlier results', () => {
-    let seed = 7;
-    const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5;
-    const rows: [number, number, number, number][] = [];
-    let p = 100;
-    for (let i = 0; i < 300; i++) {
-      const o = p;
-      p = Math.max(1, p * (1 + rand() * 0.06));
-      rows.push([o, Math.max(o, p) * 1.01, Math.min(o, p) * 0.99, p]);
-    }
-    const a = bars(rows);
-    const b = a.map((x, i) => (i >= 250 ? { ...x, open: x.open * 2, high: x.high * 2, low: x.low * 2, close: x.close * 2 } : x));
-    const strategy = strategyById('sma-cross');
-    const s = { ...free, feePct: 0.1, stopPct: 8 };
-    const ra = runBacktest(a, strategy.signals(a, { fast: 5, slow: 20 }), s, 0, 299);
-    const rb = runBacktest(b, strategy.signals(b, { fast: 5, slow: 20 }), s, 0, 299);
-    expect(ra.trades.length).toBeGreaterThan(3);
-    expect(rb.equity.slice(0, 250)).toEqual(ra.equity.slice(0, 250));
-  });
-
-  it('buy & hold buys at the first open and sells at the last close', () => {
-    expect(buyAndHold(c, free, 0, 4).at(-1)).toBeCloseTo((1000 * 112) / 100, 9);
+  it('holds a condition for N bars with "within"', () => {
+    const closes = [1, 1, 1, 2, 2, 2, 2, 2];
+    const c = bars(closes.map((x) => [x, x, x, x]));
+    const s = strat((x) => (x.longEntry = group('all', [rule(ind('price'), 'xup', num(1.5), { within: 3 })])));
+    const sig = evaluate(s, inputsOf(c));
+    expect([...sig.longEntry]).toEqual([0, 0, 0, 1, 1, 1, 0, 0]);
   });
 });

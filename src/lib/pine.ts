@@ -1,215 +1,214 @@
-import type { Strategy } from './strategies';
-import type { Params, Settings } from './types';
+// Writes any rule-builder strategy as a TradingView Pine Script v6 strategy with the same rules, exits and costs.
+import { indicator, PINE_SOURCE } from './catalog';
+import { instanceKey, operandLabel, type IndOperand, type Operand, type Rule, type RuleGroup, type Strategy } from './rules';
 
-const num = (v: number) => String(Number(v.toFixed(4)));
+const fmt = (v: number) => (Number.isInteger(v) ? String(v) : String(+v.toFixed(8)));
 
-interface PineParts {
-  inputs: string[];
-  calc: string[];
-  plots: string[];
-  long: string;
-  exitLong: string;
-  short: string;
-  exitShort: string;
-  overlay: boolean;
-}
+export function toPine(s: Strategy, title = s.name, fromDay = '2020-01-01'): string {
+  const decl: string[] = [];
+  const vars = new Map<string, { v: string; out: Record<string, string> }>();
+  let counter = 0;
 
-function parts(strategy: Strategy, p: Params): PineParts {
-  switch (strategy.id) {
-    case 'sma-cross':
-    case 'ema-cross': {
-      const fn = strategy.id === 'sma-cross' ? 'ta.sma' : 'ta.ema';
-      const tag = strategy.id === 'sma-cross' ? 'SMA' : 'EMA';
-      return {
-        inputs: [`fastLen = input.int(${p.fast}, "Fast ${tag}", minval = 1)`, `slowLen = input.int(${p.slow}, "Slow ${tag}", minval = 2)`],
-        calc: [`fast = ${fn}(close, fastLen)`, `slow = ${fn}(close, slowLen)`],
-        plots: [`plot(fast, "Fast ${tag}", color.orange)`, `plot(slow, "Slow ${tag}", color.blue)`],
-        long: 'ta.crossover(fast, slow)',
-        exitLong: 'ta.crossunder(fast, slow)',
-        short: 'ta.crossunder(fast, slow)',
-        exitShort: 'ta.crossover(fast, slow)',
-        overlay: true,
-      };
+  const operand = (o: Operand): string => {
+    if (o.kind === 'num') return fmt(o.v);
+    const key = instanceKey(o);
+    let entry = vars.get(key);
+    if (!entry) {
+      const def = indicator(o.id);
+      const v = `${def.id.replace(/[^a-z]/g, '')}${++counter}_`;
+      const src = PINE_SOURCE[o.src ?? def.source ?? 'close'];
+      const res = def.pine(o.p, src, v);
+      if (res.lines?.length) decl.push(`// ${operandLabel({ ...o, out: undefined, ago: 0 } as IndOperand)}`, ...res.lines);
+      entry = { v, out: res.out };
+      vars.set(key, entry);
     }
-    case 'rsi':
-      return {
-        inputs: [
-          `rsiLen = input.int(${p.period}, "RSI length", minval = 2)`,
-          `oversold = input.float(${num(p.oversold)}, "Oversold")`,
-          `overbought = input.float(${num(p.overbought)}, "Overbought")`,
-        ],
-        calc: ['r = ta.rsi(close, rsiLen)'],
-        plots: ['// Add the built-in RSI indicator to see the levels on the chart.'],
-        long: 'ta.crossover(r, oversold)',
-        exitLong: 'ta.crossover(r, overbought)',
-        short: 'ta.crossunder(r, overbought)',
-        exitShort: 'ta.crossunder(r, oversold)',
-        overlay: true,
-      };
-    case 'bollinger':
-      return {
-        inputs: [
-          `bbLen = input.int(${p.period}, "Length", minval = 2)`,
-          `bbWidth = input.float(${num(p.width)}, "Band width (std dev)", step = 0.25)`,
-        ],
-        calc: ['[mid, upper, lower] = ta.bb(close, bbLen, bbWidth)'],
-        plots: [
-          'plot(upper, "Upper band", color.purple)',
-          'plot(mid, "Middle band", color.gray)',
-          'plot(lower, "Lower band", color.purple)',
-        ],
-        long: 'ta.crossover(close, lower)',
-        exitLong: 'ta.crossover(close, mid)',
-        short: 'ta.crossunder(close, upper)',
-        exitShort: 'ta.crossunder(close, mid)',
-        overlay: true,
-      };
-    case 'donchian':
-      return {
-        inputs: [
-          `entryLen = input.int(${p.entry}, "Entry window", minval = 1)`,
-          `exitLen = input.int(${p.exit}, "Exit window", minval = 1)`,
-        ],
-        calc: [
-          '// Channels of the bars before this one, so a close can break out of them.',
-          'entryHigh = ta.highest(high, entryLen)[1]',
-          'entryLow = ta.lowest(low, entryLen)[1]',
-          'exitHigh = ta.highest(high, exitLen)[1]',
-          'exitLow = ta.lowest(low, exitLen)[1]',
-        ],
-        plots: ['plot(entryHigh, "Entry high", color.blue)', 'plot(exitLow, "Exit low", color.fuchsia)'],
-        long: 'ta.crossover(close, entryHigh)',
-        exitLong: 'ta.crossunder(close, exitLow)',
-        short: 'ta.crossunder(close, entryLow)',
-        exitShort: 'ta.crossover(close, exitHigh)',
-        overlay: true,
-      };
-    default:
-      return {
-        inputs: [
-          `fastLen = input.int(${p.fast}, "Fast EMA", minval = 1)`,
-          `slowLen = input.int(${p.slow}, "Slow EMA", minval = 2)`,
-          `signalLen = input.int(${p.signal}, "Signal", minval = 1)`,
-        ],
-        calc: ['[macdLine, signalLine, hist] = ta.macd(close, fastLen, slowLen, signalLen)'],
-        plots: ['// Add the built-in MACD indicator to see the lines on the chart.'],
-        long: 'ta.crossover(macdLine, signalLine)',
-        exitLong: 'ta.crossunder(macdLine, signalLine)',
-        short: 'ta.crossunder(macdLine, signalLine)',
-        exitShort: 'ta.crossover(macdLine, signalLine)',
-        overlay: true,
-      };
-  }
-}
+    const def = indicator(o.id);
+    const expr = entry.out[o.out ?? def.outputs[0].key];
+    return o.ago ? `${wrap(expr)}[${o.ago}]` : expr;
+  };
+  const wrap = (e: string) => (/^[\w.]+$/.test(e) ? e : `(${e})`);
 
-/** The same strategy as a TradingView Pine Script v6 strategy, ready to paste into the Pine Editor. */
-export function pineScript(strategy: Strategy, p: Params, s: Settings, opts: { market: string; from: string; to: string | null }): string {
-  const x = parts(strategy, p);
-  const both = s.direction === 'both';
+  const ruleExpr = (r: Rule): string => {
+    const a = operand(r.a);
+    const b = operand(r.b);
+    let e: string;
+    switch (r.cmp) {
+      case 'xup':
+        e = `ta.crossover(${a}, ${b})`;
+        break;
+      case 'xdn':
+        e = `ta.crossunder(${a}, ${b})`;
+        break;
+      case 'gt':
+        e = `${a} > ${b}`;
+        break;
+      case 'lt':
+        e = `${a} < ${b}`;
+        break;
+      case 'gte':
+        e = `${a} >= ${b}`;
+        break;
+      case 'lte':
+        e = `${a} <= ${b}`;
+        break;
+      case 'rising':
+        e = `${wrap(a)} > ${wrap(a)}[${r.bars ?? 1}]`;
+        break;
+      case 'falling':
+        e = `${wrap(a)} < ${wrap(a)}[${r.bars ?? 1}]`;
+        break;
+    }
+    return r.within && r.within > 1 ? `(ta.barssince(${e}) < ${r.within})` : `(${e})`;
+  };
+  const groupExpr = (g: RuleGroup, empty: string): string => {
+    if (!g.items.length) return empty;
+    const parts = g.items.map((it) => (it.type === 'rule' ? ruleExpr(it) : `(${groupExpr(it, g.mode === 'all' ? 'true' : 'false')})`));
+    return parts.join(g.mode === 'all' ? ' and ' : ' or ');
+  };
+
+  const long = s.side !== 'short';
+  const short = s.side !== 'long';
+  const conds = [
+    `longEntry = ${long ? groupExpr(s.longEntry, 'false') : 'false'}`,
+    `longExit = ${long ? groupExpr(s.longExit, 'false') : 'false'}`,
+    `shortEntry = ${short ? groupExpr(s.shortEntry, 'false') : 'false'}`,
+    `shortExit = ${short ? groupExpr(s.shortExit, 'false') : 'false'}`,
+    `filterOk = ${groupExpr(s.filter, 'true')}`,
+  ];
+
+  const e = s.exits;
+  const sz = s.sizing;
+  const pyramiding = sz.scaleIn.on ? sz.scaleIn.max + 1 : 1;
+  const qtyHeader =
+    sz.mode === 'equity'
+      ? `default_qty_type = strategy.percent_of_equity, default_qty_value = ${fmt(Math.min(sz.value, 100 * sz.leverage))}`
+      : 'default_qty_type = strategy.fixed, default_qty_value = 1';
+
   const L: string[] = [];
-  const blank = () => L.push('');
-
   L.push('//@version=6');
+  L.push(`// ${title}`);
+  L.push('// Exported from Edgelab. Signals are read at the close and filled at the next open, as in the backtest.');
   L.push(
-    `strategy("Edgelab: ${strategy.name}", overlay = ${x.overlay}, initial_capital = ${num(s.capital)}, default_qty_type = strategy.percent_of_equity, default_qty_value = ${num(s.sizePct)}, commission_type = strategy.commission.percent, commission_value = ${num(s.feePct)}, pyramiding = 0)`,
+    `strategy(${JSON.stringify(title)}, overlay = true, initial_capital = ${fmt(s.costs.capital)}, ${qtyHeader}, commission_type = strategy.commission.percent, commission_value = ${fmt(s.costs.feePct)}, slippage = 0, pyramiding = ${pyramiding}, margin_long = ${fmt(100 / sz.leverage)}, margin_short = ${fmt(100 / sz.leverage)})`,
   );
-  blank();
-  L.push(`// Exported from Edgelab for ${opts.market}. ${strategy.rules.join(' ')}`);
-  L.push('// Signals are read at the bar close and filled at the next open, the same as in Edgelab.');
-  if (s.slippagePct > 0)
-    L.push(`// Edgelab charged ${num(s.slippagePct)}% slippage per fill. In TradingView, set slippage (in ticks) under Properties.`);
-  blank();
-  L.push(`startTime = input.time(timestamp("${opts.from}T00:00:00"), "Start date")`);
-  if (opts.to) L.push(`endTime = input.time(timestamp("${opts.to}T23:59:59"), "End date")`);
-  L.push(`inWindow = time >= startTime${opts.to ? ' and time <= endTime' : ''}`);
-  blank();
-  L.push(...x.inputs);
-  L.push(...x.calc);
-  L.push(...x.plots);
-  blank();
+  L.push('');
+  L.push(`fromDate = input.time(timestamp("${fromDay || '2000-01-01'}T00:00:00"), "Start date")`);
+  L.push('inWindow = time >= fromDate');
+  L.push('');
 
-  if (s.trendFilter > 0) {
-    L.push(`trendLen = input.int(${s.trendFilter}, "Trend filter SMA", minval = 2)`);
-    L.push('trendSma = ta.sma(close, trendLen)');
-    L.push('plot(trendSma, "Trend filter", color.gray)');
-    L.push(`longOk = close > trendSma${both ? '\nshortOk = close < trendSma' : ''}`);
-  } else {
-    L.push(`longOk = true${both ? '\nshortOk = true' : ''}`);
+  // Build conditions first so indicator declarations are collected.
+  const condLines = conds;
+  if (decl.length) {
+    L.push('// Indicators');
+    L.push(...decl);
+    L.push('');
   }
-  blank();
+  L.push('// Rules');
+  L.push(...condLines);
+  L.push('');
 
-  L.push(`longSignal = ${x.long}`);
-  L.push(`exitLongSignal = ${x.exitLong}`);
-  if (both) {
-    L.push(`shortSignal = ${x.short}`);
-    L.push(`exitShortSignal = ${x.exitShort}`);
+  // Exits and sizing
+  const atrLen = Math.max(1, e.atrLength);
+  L.push('// Risk');
+  L.push(`atrNow = ta.atr(${atrLen})`);
+  L.push('var float entryAtr = na');
+  L.push('var int entryBar = na');
+  L.push('var float extreme = na');
+  L.push('var bool beArmed = false');
+  L.push('var bool trailOn = false');
+  L.push('newPos = strategy.position_size != 0 and (strategy.position_size[1] == 0 or math.sign(strategy.position_size) != math.sign(strategy.position_size[1]))');
+  L.push('if newPos');
+  L.push('    entryAtr := atrNow[1]');
+  L.push('    entryBar := bar_index');
+  L.push('    extreme := strategy.position_avg_price');
+  L.push('    beArmed := false');
+  L.push(`    trailOn := ${e.trail.on && e.trail.activate <= 0 ? 'true' : 'false'}`);
+  L.push('isLong = strategy.position_size > 0');
+  L.push('isShort = strategy.position_size < 0');
+  L.push('avgPrice = strategy.position_avg_price');
+  const stopDist = e.stop.on ? (e.stop.unit === 'pct' ? `avgPrice * ${fmt(e.stop.value / 100)}` : `entryAtr * ${fmt(e.stop.value)}`) : 'na';
+  L.push(`stopDist = ${stopDist}`);
+  L.push('dirSign = isLong ? 1 : -1');
+  if (e.stop.on) L.push('fixedStop = avgPrice - dirSign * stopDist');
+  if (e.trail.on) {
+    const td = e.trail.unit === 'pct' ? `extreme * ${fmt(e.trail.value / 100)}` : `atrNow[1] * ${fmt(e.trail.value)}`;
+    L.push(`trailStop = trailOn ? extreme - dirSign * ${td} : na`);
   }
-  blank();
+  if (e.breakeven.on) {
+    const need = e.breakeven.unit === 'pct' ? `avgPrice * ${fmt(e.breakeven.value / 100)}` : `stopDist * ${fmt(e.breakeven.value)}`;
+    L.push(`beLevel = beArmed ? avgPrice : na`);
+    L.push(`if strategy.position_size != 0 and not beArmed and (isLong ? high - avgPrice : avgPrice - low) >= ${need}`);
+    L.push('    beArmed := true');
+  }
+  const parts = [e.stop.on ? 'fixedStop' : null, e.trail.on ? 'trailStop' : null, e.breakeven.on ? 'beLevel' : null].filter(Boolean) as string[];
+  if (parts.length) {
+    L.push('float stopLevel = na');
+    for (const p of parts) L.push(`stopLevel := na(${p}) ? stopLevel : na(stopLevel) ? ${p} : isLong ? math.max(stopLevel, ${p}) : math.min(stopLevel, ${p})`);
+  } else L.push('float stopLevel = na');
 
-  L.push('if inWindow');
-  L.push('    if strategy.position_size > 0');
-  if (both) {
-    L.push('        if shortSignal and shortOk');
-    L.push('            strategy.entry("Short", strategy.short)');
-    L.push('        else if exitLongSignal');
-    L.push('            strategy.close("Long")');
-    L.push('    else if strategy.position_size < 0');
-    L.push('        if longSignal and longOk');
-    L.push('            strategy.entry("Long", strategy.long)');
-    L.push('        else if exitShortSignal');
-    L.push('            strategy.close("Short")');
-    L.push('    else if longSignal and longOk');
-    L.push('        strategy.entry("Long", strategy.long)');
-    L.push('    else if shortSignal and shortOk');
-    L.push('        strategy.entry("Short", strategy.short)');
-  } else {
-    L.push('        if exitLongSignal');
-    L.push('            strategy.close("Long")');
-    L.push('    else if longSignal and longOk');
-    L.push('        strategy.entry("Long", strategy.long)');
+  // Entry size
+  let qtyArg = '';
+  if (sz.mode === 'risk') {
+    const dist = e.stop.on ? (e.stop.unit === 'pct' ? `close * ${fmt(e.stop.value / 100)}` : `atrNow * ${fmt(e.stop.value)}`) : 'close';
+    L.push(`riskQty = math.min(strategy.equity * ${fmt(sz.value / 100)} / ${dist}, strategy.equity * ${fmt(sz.leverage)} / close)`);
+    qtyArg = ', qty = riskQty';
+  } else if (sz.mode === 'cash') {
+    L.push(`cashQty = math.min(${fmt(sz.value)}, strategy.equity * ${fmt(sz.leverage)}) / close`);
+    qtyArg = ', qty = cashQty';
   }
-  if (opts.to) {
-    blank();
-    L.push('if time > endTime');
-    L.push('    strategy.close_all()');
+  L.push('');
+  L.push('// Orders');
+  if (long) {
+    L.push('if inWindow and longEntry and filterOk and strategy.position_size <= 0');
+    L.push(`    strategy.entry("Long", strategy.long${qtyArg})`);
+    if (sz.scaleIn.on)
+      L.push(
+        `if inWindow and longEntry and filterOk and strategy.position_size > 0 and strategy.opentrades < ${pyramiding}${sz.scaleIn.onlyInProfit ? ' and close > avgPrice' : ''}`,
+        `    strategy.order("Long add", strategy.long, qty = math.abs(strategy.opentrades.size(0)) * ${fmt(sz.scaleIn.size / 100)})`,
+      );
+    L.push('if longExit and isLong');
+    L.push('    strategy.close("Long", comment = "Exit signal")');
   }
-
-  const stop = s.stopPct > 0;
-  const target = s.takeProfitPct > 0;
-  const trail = s.trailPct > 0;
-  if (stop || target || trail) {
-    blank();
-    L.push('// Stops and targets. Before the entry fills, levels are based on the close; afterwards on the fill price.');
-    if (stop) L.push(`stopPct = input.float(${num(s.stopPct)}, "Stop loss %", minval = 0, step = 0.5) / 100`);
-    if (target) L.push(`targetPct = input.float(${num(s.takeProfitPct)}, "Take profit %", minval = 0, step = 0.5) / 100`);
-    if (trail) L.push(`trailPct = input.float(${num(s.trailPct)}, "Trailing stop %", minval = 0, step = 0.5) / 100`);
-    if (trail) {
-      L.push('var float peak = na');
-      L.push('peak := strategy.position_size > 0 ? math.max(nz(peak, strategy.position_avg_price), high) : na');
-      if (both) {
-        L.push('var float trough = na');
-        L.push('trough := strategy.position_size < 0 ? math.min(nz(trough, strategy.position_avg_price), low) : na');
-      }
-    }
-    const sides: { name: 'Long' | 'Short'; sign: 1 | -1 }[] = both
-      ? [
-          { name: 'Long', sign: 1 },
-          { name: 'Short', sign: -1 },
-        ]
-      : [{ name: 'Long', sign: 1 }];
-    for (const side of sides) {
-      const isLong = side.sign === 1;
-      const base = `${side.name.toLowerCase()}Base`;
-      L.push(`${base} = strategy.position_size ${isLong ? '>' : '<'} 0 ? strategy.position_avg_price : close`);
-      const levels: string[] = [];
-      if (stop) levels.push(`${base} * (1 ${isLong ? '-' : '+'} stopPct)`);
-      if (trail) levels.push(`nz(${isLong ? 'peak' : 'trough'}, ${base}) * (1 ${isLong ? '-' : '+'} trailPct)`);
-      const args: string[] = [];
-      if (levels.length) args.push(`stop = ${levels.length === 1 ? levels[0] : `math.${isLong ? 'max' : 'min'}(${levels.join(', ')})`}`);
-      if (target) args.push(`limit = ${base} * (1 ${isLong ? '+' : '-'} targetPct)`);
-      L.push(`strategy.exit("${side.name} exit", "${side.name}", ${args.join(', ')})`);
-    }
+  if (short) {
+    L.push('if inWindow and shortEntry and filterOk and strategy.position_size >= 0');
+    L.push(`    strategy.entry("Short", strategy.short${qtyArg})`);
+    if (sz.scaleIn.on)
+      L.push(
+        `if inWindow and shortEntry and filterOk and strategy.position_size < 0 and strategy.opentrades < ${pyramiding}${sz.scaleIn.onlyInProfit ? ' and close < avgPrice' : ''}`,
+        `    strategy.order("Short add", strategy.short, qty = math.abs(strategy.opentrades.size(0)) * ${fmt(sz.scaleIn.size / 100)})`,
+      );
+    L.push('if shortExit and isShort');
+    L.push('    strategy.close("Short", comment = "Exit signal")');
+  }
+  if (e.time.on) {
+    L.push(`if strategy.position_size != 0 and bar_index - entryBar + 1 >= ${e.time.bars}`);
+    L.push('    strategy.close_all(comment = "Time exit")');
   }
 
+  // Protective and profit orders
+  const sideNames = [long ? ['Long', 'isLong'] : null, short ? ['Short', 'isShort'] : null].filter(Boolean) as [string, string][];
+  const targets = e.targets.on ? e.targets.levels : [];
+  for (const [name, cond] of sideNames) {
+    if (!targets.length && !parts.length) continue;
+    L.push(`if ${cond}`);
+    if (targets.length) {
+      targets.forEach((t, i) => {
+        const d = t.unit === 'pct' ? `avgPrice * ${fmt(t.value / 100)}` : t.unit === 'atr' ? `entryAtr * ${fmt(t.value)}` : `stopDist * ${fmt(t.value)}`;
+        const last = i === targets.length - 1;
+        L.push(
+          `    strategy.exit("${name} TP${i + 1}", "${name}", qty_percent = ${last ? 100 : fmt(t.size)}, limit = avgPrice + dirSign * ${d}, stop = stopLevel)`,
+        );
+      });
+    } else L.push(`    strategy.exit("${name} stop", "${name}", stop = stopLevel)`);
+  }
+  if (e.trail.on || e.breakeven.on) {
+    L.push('if strategy.position_size != 0');
+    L.push('    extreme := isLong ? math.max(extreme, high) : math.min(extreme, low)');
+    if (e.trail.on && e.trail.activate > 0) L.push(`    trailOn := trailOn or (isLong ? high / avgPrice - 1 : 1 - low / avgPrice) * 100 >= ${fmt(e.trail.activate)}`);
+  }
+  L.push('');
+  L.push('plotshape(longEntry and filterOk, "Long signal", shape.triangleup, location.belowbar, color.new(color.teal, 0), size = size.tiny)');
+  if (short) L.push('plotshape(shortEntry and filterOk, "Short signal", shape.triangledown, location.abovebar, color.new(color.red, 0), size = size.tiny)');
+  L.push('plot(stopLevel, "Stop", color.new(color.red, 30), style = plot.style_linebr)');
   return L.join('\n') + '\n';
 }

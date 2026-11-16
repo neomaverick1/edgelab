@@ -1,0 +1,33 @@
+name: Screenshots
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['scripts/shots.mjs']
+
+permissions:
+  contents: write
+
+jobs:
+  shots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright@1.56.1 install --with-deps chromium
+      - run: npm i --no-save playwright@1.56.1
+      - run: npm run data
+      - run: npm run build
+      - run: node scripts/shots.mjs
+      - name: Commit the screenshots
+        run: |
+          git config user.name "Randy Kundinger"
+          git config user.email "neomaverick1@users.noreply.github.com"
+          git add docs/screenshots
+          git commit -m "Update screenshots [skip ci]" || echo "No changes"
+          git push

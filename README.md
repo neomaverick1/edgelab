@@ -1,95 +1,72 @@
-# Edgelab: trading strategy backtester (web)
+# Edgelab: trading strategy lab (React + TypeScript, web and Android)
 
-A **React + TypeScript** web app for testing trading strategies on **real crypto market data**. Pick a strategy, tune it, add stops, fees and slippage, and see every trade, the equity curve against buy & hold, the drawdown and the monthly returns update instantly. An **optimizer** tests every parameter combination and checks the winners on data it held back, and any setup **exports to TradingView Pine Script**.
+Edgelab builds, backtests and stress-tests trading strategies on **any market**: stocks, ETFs, indexes, forex, futures and every crypto pair. You can write rules in a visual builder or describe them in **plain English**. It then tells you how likely the result is to hold up: walk-forward testing, Monte Carlo, a parameter stability map and an overfitting grade from A to F. Strategies can be **paper traded live**, raced head to head, and exported to TradingView Pine Script.
 
-**Live demo:** [neomaverick1.github.io/edgelab](https://neomaverick1.github.io/edgelab/)
+- **Live web app:** [neomaverick1.github.io/edgelab](https://neomaverick1.github.io/edgelab/)
+- **Android app:** the latest `Edgelab.apk` is on the [Releases page](https://github.com/neomaverick1/edgelab/releases/latest).
 
-<img src="docs/screenshots/overview.jpg" alt="Backtest of an EMA crossover on Bitcoin daily candles" width="100%">
-
-<img src="docs/screenshots/equity.jpg" alt="Equity against buy and hold, with the drawdown underneath" width="100%">
+<img src="docs/screenshots/overview.jpg" alt="Backtest of the Turtle breakout on Bitcoin with the equity curve, drawdown and key statistics" width="100%">
 
 <p>
-  <img src="docs/screenshots/optimizer.jpg" width="49%" alt="Optimizer heatmap on the held-back period">
-  <img src="docs/screenshots/pine-script.jpg" width="49%" alt="Pine Script export">
+  <img src="docs/screenshots/english.jpg" width="49%" alt="A strategy typed in plain English turned into rules">
+  <img src="docs/screenshots/robustness.jpg" width="49%" alt="Overfitting grade with walk-forward, Monte Carlo and stability checks">
 </p>
 <p>
-  <img src="docs/screenshots/macd-eth-6h.jpg" width="74%" alt="MACD long and short on Ethereum 6-hour candles, with a stop loss">
-  <img src="docs/screenshots/phone.jpg" width="24%" alt="Edgelab on a phone">
+  <img src="docs/screenshots/stability.jpg" width="49%" alt="Parameter stability heatmap with a held-back test">
+  <img src="docs/screenshots/monte-carlo.jpg" width="49%" alt="Monte Carlo paths and outcome table">
+</p>
+<p>
+  <img src="docs/screenshots/compare.jpg" width="49%" alt="Fifteen classic systems ranked head to head on the S&amp;P 500 ETF">
+  <img src="docs/screenshots/live.jpg" width="49%" alt="Live paper trading on Bitcoin">
+</p>
+<p>
+  <img src="docs/screenshots/phone-results.jpg" width="32%" alt="Results on a phone">
+  <img src="docs/screenshots/phone-builder.jpg" width="32%" alt="Rule builder on a phone">
+  <img src="docs/screenshots/phone-lab.jpg" width="32%" alt="Robustness lab on a phone">
 </p>
 
-Every push to `main` type-checks, lints and tests the code, refreshes the market data and redeploys the site ([`.github/workflows/build.yml`](.github/workflows/build.yml)).
+## What it does
 
-## Features
+| | |
+| --- | --- |
+| **Any market** | The Android app loads any ticker live from Yahoo Finance (stocks, ETFs, indexes, forex, futures, crypto) on 5-minute to weekly bars. The website streams every Coinbase and Binance pair live, plus a daily snapshot of 200 popular stocks, ETFs, forex pairs and futures. Anything else can come from a CSV file (TradingView, Yahoo, MetaTrader and broker exports are recognised). |
+| **Rule builder** | 40+ indicators and outputs: moving averages (SMA, EMA, WMA, Hull, DEMA, VWAP), RSI, Stochastic, Stoch RSI, MACD, ADX/DMI, Aroon, CCI, ROC, Williams %R, Z-score, regression slope, Bollinger, Keltner, Donchian, ATR, Supertrend, Parabolic SAR, Ichimoku, volume, OBV, MFI, CMF, candle patterns, and hour, weekday and month filters. Rules compare any two values (crosses above or below, above, below, rising, falling, “within the last N bars”, “N bars ago”) and combine with AND/OR groups, separately for long entries, long exits, short entries, short exits and a shared filter. |
+| **Exits and sizing** | Several exits at once: fixed or ATR stop, trailing stop with an optional start, a take-profit ladder in %, ATR or R multiples, move-to-breakeven, time exit and the exit rules. Size by % of equity, % risked per trade or a fixed amount, with a leverage cap and scaling in. Fees and slippage on every fill. |
+| **Plain English** | “Buy when RSI is under 30 and close is above the 200 EMA. Sell when RSI crosses above 60. Stop 2 ATR, take half at 2R and the rest at 5R, risk 1% per trade.” The parser runs on the device with no AI service. It shows what it understood and what it couldn’t read, and can write any rule set back into a sentence. |
+| **Backtest** | No look-ahead: signals are read when a bar closes and filled at the next open. Stops and targets are checked inside each bar, the stop first if a bar touches both, and a gap fills at the open. Results include return, CAGR, max drawdown and its length, Sharpe, Sortino, Calmar, ulcer index, profit factor, payoff, R multiples, MAE/MFE, exposure, long/short split, how each trade ended, monthly returns, and buy and hold for comparison. |
+| **Robustness lab** | A **stability map** of any two numbers (indicator lengths, levels, stop and target sizes) with a held-back test. **Walk-forward** testing re-tunes on each training window and trades the next one blind, with rolling or anchored windows. **Monte Carlo** resamples or reorders the trades thousands of times. Together they give an **overfitting grade** with the reasons behind it. Heavy work runs in a Web Worker. |
+| **Head to head** | Run any mix of strategies and markets on the same dates and costs. Rank them by return over drawdown, Sharpe, Calmar, profit factor or return, and overlay their growth curves. |
+| **Live paper trading** | Runs a strategy forward on live prices (WebSockets for Binance and Coinbase, polling for Yahoo in the app). It shows the open position with its stop and targets on the chart, plus paper trades and browser alerts. Sessions are saved and pick up where they left off. |
+| **Library and sharing** | 15 classic systems built from ordinary rules (Turtle, Connors RSI-2, golden cross, Supertrend, Ichimoku, Bollinger squeeze, z-score reversion…). You can also save your own strategies, undo and redo changes, share a link with the whole setup, and export a TradingView Pine Script v6 strategy with the same rules, exits, sizing and costs. |
 
-| Area                  | What it does                                                                                                                                                                                                                                                                                                                    |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Market data**       | Daily, 6-hour and 1-hour candles for Bitcoin, Ethereum, Solana and Dogecoin from Coinbase's public API. The browser tops the data up live on every visit; a bundled snapshot keeps the app working if Coinbase can't be reached.                                                                                                |
-| **Strategies**        | SMA crossover, EMA crossover, RSI reversion, Bollinger reversion, Donchian breakout and MACD crossover, each with adjustable parameters, plus an optional trend filter (only buy above the 50, 100 or 200-day average).                                                                                                         |
-| **Realistic fills**   | Signals are read at the close and filled at the next open, so the test never sees the future. Fees and slippage on every fill. Stop loss, take profit and trailing stop are checked inside each bar. Long only, or long & short (a short is closed before the account can go below zero, like an exchange would).               |
-| **Results**           | Net profit, max drawdown and how long it lasted, Sharpe and Sortino ratios, CAGR, Calmar, win rate, profit factor, expectancy, time in market and total trading costs, each next to buy & hold.                                                                                                                                 |
-| **Charts**            | Candles with the strategy's indicators and trade arrows (RSI and MACD in a panel below), equity against buy & hold with the drawdown underneath. Both charts scroll and zoom together, with a linear or log price scale.                                                                                                        |
-| **Trades and months** | Every trade with entry, exit, holding time, return and why it closed. Click one to jump to it on the chart, or download them all as CSV. A calendar table shows the return of every month and year.                                                                                                                             |
-| **Optimizer**         | Backtests every combination of two parameters in a background thread and colours a heatmap by Sharpe, return, drawdown, profit factor or win rate. It can hold back the last 30% of the data and show how the best settings did on data they never saw, the honest way to spot overfitting. Click any cell to use its settings. |
-| **Pine Script**       | The current strategy, costs, stops, trend filter and dates as a TradingView Pine Script v6 strategy, ready to paste into the Pine Editor.                                                                                                                                                                                       |
-| **Share links**       | Every setting lives in the page address, so a backtest can be sent as a link.                                                                                                                                                                                                                                                   |
+## How it is built
 
-## How the backtester works
-
-- **No look-ahead.** Indicators only use bars up to the one being read ([`src/lib/indicators.ts`](src/lib/indicators.ts)). Orders placed at a bar's close fill at the next bar's open. A test changes the future candles of a price series and checks that nothing before them moves.
-- **One bar at a time** ([`src/lib/engine.ts`](src/lib/engine.ts)): fill the orders from the last close, check stops and targets against the bar's high and low, mark the account to market at the close, then read the signals for the next open. If a bar touches both the stop and the target, the stop is assumed to come first, and a price that gaps through a level fills at the open.
-- **Costs** are charged as a percentage fee on every fill, and slippage moves every market order's price against you. Take-profit orders are limit orders and fill at their price.
-- **Metrics** ([`src/lib/metrics.ts`](src/lib/metrics.ts)): Sharpe and Sortino are annualised from bar returns with 365 days a year, since crypto trades every day. CAGR is shown once a test covers at least six months. Buy & hold pays the same fees and slippage.
-- **Indicators warm up on earlier data**, so a test that starts in 2020 has a ready 200-day average on its first day.
+- **React 19 + TypeScript (strict)**, built with Vite. Charts use [lightweight-charts](https://github.com/tradingview/lightweight-charts) and the Monte Carlo chart is plain SVG.
+- **Rule engine** ([`src/lib/rules.ts`](src/lib/rules.ts), [`src/lib/catalog.ts`](src/lib/catalog.ts)): a strategy is plain JSON, made of condition trees over a catalog of indicators. Each indicator knows how to compute itself, draw itself and write itself in Pine Script.
+- **Backtester** ([`src/lib/engine.ts`](src/lib/engine.ts)): event-driven. It handles partial exits, scale-ins, risk-based sizing, leverage and liquidation, and can keep a position open for live trading.
+- **Robustness** ([`src/lib/robustness.ts`](src/lib/robustness.ts)): grids, walk-forward, Monte Carlo with a seeded random generator, and the grade.
+- **Plain English** ([`src/lib/english.ts`](src/lib/english.ts)): a pattern-based parser and writer. The tests check that every built-in system survives a round trip from rules to words and back.
+- **Data** ([`src/lib/data`](src/lib/data)): Coinbase, Binance, Yahoo Finance, CSV, resampling (1h → 4h, 1d → 1w) and live feeds. In the Android app, requests go through the native HTTP stack, so Yahoo Finance works without a server.
+- **Android:** a [Capacitor](https://capacitorjs.com) app ([`android/`](android)) that wraps the same build.
+- **CI** ([`.github/workflows/build.yml`](.github/workflows/build.yml)) runs on every push. It type-checks, lints and runs the tests, downloads the market snapshot, deploys the website, builds a signed APK and publishes a release. A daily scheduled run refreshes the snapshot after the US close.
 
 ## Run it
 
-Requires Node 20+.
-
 ```bash
 npm install
-npm run dev        # open the printed address
-npm run data       # optional: download fresh candles from Coinbase into public/data
+npm run dev          # http://localhost:5173 (crypto loads live; stocks need the snapshot below)
+npm run data         # download the stock/forex/futures snapshot into public/data/markets
+npm test             # 78 tests: engine, exits, sizing, indicators, English parser, Pine export, CSV, robustness
+npm run build
+npm run android      # build and copy into the Android project, then open android/ in Android Studio
 ```
 
-## Checks
-
-```bash
-npm run typecheck  # TypeScript, strict mode
-npm run lint       # Oxlint
-npm test           # Vitest: indicators, fills, costs, stops, shorts, no look-ahead, metrics, optimizer, Pine Script export, share links, data
-```
-
-## Project structure
-
-```
-src/
-  App.tsx                 Page layout, data loading and the backtest pipeline
-  components/
-    Controls.tsx          Strategy, parameters, test period, position, risk and costs
-    PriceChart.tsx        Candles, indicators, trade arrows, lower panel (TradingView Lightweight Charts)
-    EquityChart.tsx       Equity, buy & hold and drawdown
-    Optimizer.tsx         Parameter heatmap with held-back testing
-    TradesTable.tsx, MonthlyTable.tsx, PineExport.tsx, StatGrid.tsx
-  lib/
-    indicators.ts         SMA, EMA, RSI, Bollinger Bands, Donchian channels, MACD
-    strategies.ts         The six strategies and their parameters
-    engine.ts             The backtester
-    metrics.ts            Returns, drawdowns, ratios, trade and monthly statistics
-    optimizer.ts          Grid search with a held-back period
-    pine.ts               Pine Script v6 export
-    data.ts               Bundled snapshot plus live candles from Coinbase
-    share.ts              Settings in the page address
-  workers/                The optimizer's background thread
-scripts/fetch-data.mjs    Downloads the candle snapshot
-public/data/              The bundled candles
-```
+The APK in the releases is signed with a demo key that is kept in the repository, so each new build installs over the last one. Sign with your own private key before publishing to Google Play.
 
 ## Credits
 
-Market data from the [Coinbase Exchange public API](https://docs.cdp.coinbase.com/exchange/reference/exchangerestapi_getproductcandles). Charts by [TradingView Lightweight Charts™](https://www.tradingview.com/lightweight-charts/) (Apache 2.0), copyright TradingView, Inc. Fonts: Inter and JetBrains Mono (SIL Open Font License) via Fontsource.
-
-Edgelab is a demo for research and education. It is not financial advice, and past results don't promise future ones.
+Market data from Coinbase, Binance and Yahoo Finance; charts by TradingView’s lightweight-charts (Apache 2.0); icons by Lucide (ISC); fonts Manrope, Fraunces and JetBrains Mono (SIL Open Font License). This is a research tool, not financial advice: past results don’t promise future ones.
 
 ## License
 
-MIT © 2026 Randy Kundinger (code). Market data and the charting library remain under their own terms.
+MIT © 2026 Randy Kundinger

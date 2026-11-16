@@ -1,4 +1,5 @@
-import '@fontsource-variable/inter';
+import '@fontsource-variable/manrope';
+import '@fontsource-variable/fraunces';
 import '@fontsource-variable/jetbrains-mono';
 import './styles.css';
 

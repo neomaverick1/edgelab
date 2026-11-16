@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Edgelab</string>
+    <string name="title_activity_main">Edgelab</string>
+    <string name="package_name">com.neomaverick.edgelab</string>
+    <string name="custom_url_scheme">com.neomaverick.edgelab</string>
+</resources>

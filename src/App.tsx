@@ -1,399 +1,344 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { BarChart3, Code2, FlaskConical, Radio, RefreshCw, SlidersHorizontal, Swords } from 'lucide-react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 
+import { AssetIcon, AssetPicker } from './components/AssetPicker';
+import { Builder } from './components/Builder';
 import { createSync } from './components/charts';
-import { Controls } from './components/Controls';
-import { EquityChart } from './components/EquityChart';
-import { MonthlyTable } from './components/MonthlyTable';
-import { Optimizer } from './components/Optimizer';
-import { PineExport } from './components/PineExport';
 import { PriceChart, type PriceChartHandle } from './components/PriceChart';
-import { StatGrid } from './components/StatGrid';
-import { TradesTable } from './components/TradesTable';
-import { Icon, Segmented } from './components/ui';
-import { loadSeries, MARKETS, seconds, TIMEFRAMES, type Series, type Timeframe } from './lib/data';
+import { ExitBreakdown, Hero, MonthlyTable, StatsList, TradesTable, type RunResult } from './components/Results';
+import { Panel, Seg, Toaster, Toggle } from './components/ui';
+import { inputsOf } from './lib/catalog';
+import { TIMEFRAMES, type Timeframe } from './lib/data/core';
+import { granularityLabel } from './lib/data/csv';
+import { assetTitle } from './lib/data/search';
+import { loadSeries, SOURCE_LABEL, timeframesFor, type Asset, type Series } from './lib/data/sources';
+import { describe } from './lib/english';
 import { runBacktest } from './lib/engine';
-import { date, fromIsoDay, isoDay } from './lib/format';
-import { sma } from './lib/indicators';
-import { computeStats, curveStats, drawdowns, monthlyReturns } from './lib/metrics';
-import { pineScript } from './lib/pine';
-import { decodeState, encodeState, type AppState } from './lib/share';
-import { strategyById, type Line } from './lib/strategies';
-import type { Candle } from './lib/types';
+import { isoDay } from './lib/format';
+import { computeStats } from './lib/metrics';
+import { evaluate, problems, type Strategy } from './lib/rules';
+import { decodeSession, DEFAULT_SESSION, encodeSession, loadLastSession, saveLastSession, type Session } from './lib/state';
+import { CodeView } from './views/CodeView';
+import { CompareView } from './views/CompareView';
+import { LiveView } from './views/LiveView';
+import { RobustnessView } from './views/RobustnessView';
 
-type Tab = 'trades' | 'monthly' | 'optimizer' | 'pine';
-const NO_CANDLES: Candle[] = [];
-const MIN_BARS = 30;
+type Mode = 'backtest' | 'lab' | 'compare' | 'live' | 'code';
+type View = Mode | 'strategy';
 
-/** Candle indices for the chosen dates, keeping at least a few dozen bars. */
-function resolveRange(candles: Candle[], from: string, to: string) {
-  if (!candles.length) return { start: 0, end: 0 };
-  const f = fromIsoDay(from);
-  const t = to ? fromIsoDay(to) + 86_399 : Infinity;
-  let end = candles.length - 1;
-  while (end > 0 && candles[end].time > t) end--;
-  let start = candles.findIndex((c) => c.time >= f);
-  if (start < 0 || start > end) start = end;
-  if (end - start < MIN_BARS) start = Math.max(0, end - MIN_BARS);
-  return { start, end };
+const MODES: { id: Mode; label: string; icon: typeof BarChart3 }[] = [
+  { id: 'backtest', label: 'Backtest', icon: BarChart3 },
+  { id: 'lab', label: 'Robustness', icon: FlaskConical },
+  { id: 'compare', label: 'Compare', icon: Swords },
+  { id: 'live', label: 'Live', icon: Radio },
+  { id: 'code', label: 'Pine & share', icon: Code2 },
+];
+
+function initialSession(): Session {
+  const fromHash = location.hash.startsWith('#s=') ? decodeSession(location.hash.slice(3)) : null;
+  return fromHash ?? loadLastSession() ?? DEFAULT_SESSION;
 }
 
+const yearsAgo = (n: number) => {
+  const d = new Date();
+  d.setUTCFullYear(d.getUTCFullYear() - n);
+  return d.toISOString().slice(0, 10);
+};
+
 export default function App() {
-  const [state, setState] = useState<AppState>(() =>
-    decodeState(
-      window.location.hash,
-      MARKETS.map((m) => m.id),
-    ),
-  );
-  const [series, setSeries] = useState<Series | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [tab, setTab] = useState<Tab>('trades');
-  const [toast, setToast] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [scale, setScale] = useState<'auto' | 'linear' | 'log'>('auto');
-  const [sync] = useState(createSync);
-  const chart = useRef<PriceChartHandle>(null);
+  const [session, setSession] = useState<Session>(initialSession);
+  const [past, setPast] = useState<Strategy[]>([]);
+  const [future, setFuture] = useState<Strategy[]>([]);
+  const [custom, setCustom] = useState<Asset[]>([]);
+  const [fetched, setFetched] = useState<{ key: string; series: Series | null; error: string | null } | null>(null);
+  const [reload, setReload] = useState(0);
+  const [view, setView] = useState<View>('backtest');
+  const [picker, setPicker] = useState(false);
+  const [log, setLog] = useState(false);
+  const [tab, setTab] = useState<'trades' | 'monthly' | 'stats' | 'exits' | 'words'>('trades');
+  const chartRef = useRef<PriceChartHandle>(null);
+  const sync = useMemo(() => createSync(), []);
 
-  const update = (patch: Partial<AppState>) => setState((s) => ({ ...s, ...patch }));
+  const { asset, tf, from, to, strategy } = session;
+  const mode: Mode = view === 'strategy' ? 'backtest' : view;
 
+  const setStrategy = useCallback((s: Strategy) => {
+    setSession((cur) => {
+      setPast((p) => [...p.slice(-40), cur.strategy]);
+      setFuture([]);
+      return { ...cur, strategy: s };
+    });
+  }, []);
+  const undo = () => {
+    if (!past.length) return;
+    setFuture((f) => [session.strategy, ...f]);
+    setSession((cur) => ({ ...cur, strategy: past[past.length - 1] }));
+    setPast((p) => p.slice(0, -1));
+  };
+  const redo = () => {
+    if (!future.length) return;
+    setPast((p) => [...p, session.strategy]);
+    setSession((cur) => ({ ...cur, strategy: future[0] }));
+    setFuture((f) => f.slice(1));
+  };
+
+  // Load prices whenever the market or timeframe changes.
+  const tfs = timeframesFor(asset);
+  const tfLoad: Timeframe = tfs.length && !tfs.includes(tf) ? (tfs.includes('1d') ? '1d' : tfs[0]) : tf;
+  const loadKey = `${asset.id}|${tfLoad}|${reload}`;
   useEffect(() => {
-    let cancelled = false;
-    loadSeries(state.market, state.tf).then(
-      (s) => {
-        if (cancelled) return;
-        setSeries(s);
-        setLoadError(null);
-      },
-      (e: Error) => !cancelled && setLoadError(e.message),
-    );
+    let live = true;
+    loadSeries(asset, tfLoad, { refresh: reload > 0 })
+      .then((s) => live && setFetched({ key: loadKey, series: s, error: null }))
+      .catch((e) => live && setFetched({ key: loadKey, series: null, error: e instanceof Error ? e.message : String(e) }));
     return () => {
-      cancelled = true;
+      live = false;
     };
-  }, [state.market, state.tf]);
+  }, [asset, tfLoad, reload, loadKey]);
+  const current = fetched?.key === loadKey ? fetched : null;
+  const loading = !current;
+  const loadError = current?.error ?? null;
+  const series = current?.series ?? (fetched?.series && fetched.series.asset.id === asset.id ? fetched.series : null);
 
-  // The address bar always holds a link to the current backtest.
+  // Remember the session and keep the address shareable.
   useEffect(() => {
-    const hash = `#${encodeState(state)}`;
-    if (hash !== window.location.hash) window.history.replaceState(null, '', hash);
-  }, [state]);
-
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 1800);
+    const t = setTimeout(() => {
+      saveLastSession(session);
+      try {
+        history.replaceState(null, '', `#s=${encodeSession(session)}`);
+      } catch {
+        // some embedded browsers refuse replaceState
+      }
+    }, 400);
     return () => clearTimeout(t);
-  }, [toast]);
+  }, [session]);
 
-  const ready = series && series.market === state.market && series.tf === state.tf ? series : null;
-  const candles = ready?.candles ?? NO_CANDLES;
-  const strategy = strategyById(state.strategy);
-  const granularity = seconds(state.tf);
-  const intraday = state.tf !== '1d';
-  const market = MARKETS.find((m) => m.id === state.market)!;
-  const { start, end } = useMemo(() => resolveRange(candles, state.from, state.to), [candles, state.from, state.to]);
-
-  const signals = useMemo(() => strategy.signals(candles, state.params), [strategy, candles, state.params]);
-  const result = useMemo(() => {
-    if (candles.length < MIN_BARS) return null;
-    const bt = runBacktest(candles, signals, state.settings, start, end);
-    const times = candles.slice(start, end + 1).map((c) => c.time);
-    return {
-      bt,
-      times,
-      stats: computeStats(bt, candles, granularity, state.settings.capital),
-      bench: curveStats(bt.benchmark, times, granularity, state.settings.capital),
-      drawdown: drawdowns(bt.equity, state.settings.capital),
-      monthly: monthlyReturns(bt.equity, times, state.settings.capital),
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPicker(true);
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      }
     };
-  }, [candles, signals, state.settings, start, end, granularity]);
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  });
 
-  const view = useMemo(() => {
-    const cut = (values: number[]) => values.slice(start, end + 1);
-    const overlays: Line[] = signals.overlays.map((l) => ({ ...l, values: cut(l.values) }));
-    if (state.settings.trendFilter > 0)
-      overlays.push({
-        name: `Trend SMA ${state.settings.trendFilter}`,
-        color: '#6B7A88',
-        values: cut(
-          sma(
-            candles.map((c) => c.close),
-            state.settings.trendFilter,
-          ),
-        ),
-        dashed: true,
-      });
-    const osc = signals.oscillator;
-    return {
-      candles: candles.slice(start, end + 1),
-      overlays,
-      oscillator: osc && {
-        ...osc,
-        lines: osc.lines.map((l) => ({ ...l, values: cut(l.values) })),
-        histogram: osc.histogram && cut(osc.histogram),
-      },
-    };
-  }, [candles, signals, start, end, state.settings.trendFilter]);
+  const deferred = useDeferredValue(strategy);
+  const ready = series && series.asset.id === asset.id && (series.asset.source === 'csv' || series.tf === tfLoad);
 
-  const pine = useMemo(
-    () =>
-      candles.length
-        ? pineScript(strategy, state.params, state.settings, {
-            market: state.market,
-            from: isoDay(candles[start].time),
-            to: state.to || null,
-          })
-        : '',
-    [candles, strategy, state.params, state.settings, state.market, start, state.to],
-  );
-
-  const refresh = async () => {
-    setRefreshing(true);
+  const result = useMemo((): { run: RunResult; plots: ReturnType<typeof evaluate>['plots'] } | { error: string } | null => {
+    if (!ready || !series) return null;
+    const c = series.candles;
+    const issues = problems(deferred).filter((p) => p.startsWith('Add at least'));
+    if (issues.length) return { error: issues[0] };
     try {
-      setSeries(await loadSeries(state.market, state.tf, { refresh: true }));
-    } catch {
-      // keep what we have
+      const sig = evaluate(deferred, inputsOf(c));
+      const fromT = from ? Date.parse(`${from}T00:00:00Z`) / 1000 : -Infinity;
+      const toT = to ? Date.parse(`${to}T23:59:59Z`) / 1000 : Infinity;
+      let first = c.findIndex((x) => x.time >= fromT);
+      if (first < 0) return { error: `No ${asset.display} bars after ${from}.` };
+      let last = c.length - 1;
+      while (last > 0 && c[last].time > toT) last--;
+      first = Math.max(first, sig.warmup);
+      if (last - first < 5) return { error: 'Not enough bars between those dates once the indicators have warmed up. Pick an earlier start.' };
+      const bt = runBacktest(c, sig, deferred, { start: first, end: last });
+      const stats = computeStats(bt, c, series.granularity, deferred.costs.capital);
+      return {
+        run: { candles: c, granularity: series.granularity, bt, stats, capital: deferred.costs.capital, key: `${asset.id}|${series.tf}|${from}|${to}|${JSON.stringify(deferred)}` },
+        plots: sig.plots,
+      };
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : String(e) };
     }
-    setRefreshing(false);
-  };
+  }, [ready, series, deferred, from, to, asset.display, asset.id]);
 
-  const share = async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      setToast('Link to this backtest copied');
-    } catch {
-      setToast('Copy the address bar to share this backtest');
-    }
+  const run = result && 'run' in result ? result.run : null;
+  // The chart shows the tested period plus a little lead-in, not years of history before it.
+  const shown = useMemo(() => {
+    if (!run || !result || !('plots' in result)) return null;
+    const a = Math.max(0, run.bt.start - Math.round((run.bt.end - run.bt.start) * 0.04) - 20);
+    const b = run.bt.end + 1;
+    return { candles: run.candles.slice(a, b), plots: result.plots.map((p) => ({ ...p, values: p.values.slice(a, b) })) };
+  }, [run, result]);
+  const intraday = (series?.granularity ?? 86_400) < 86_400;
+  const setAsset = (a: Asset) => {
+    setSession((s) => ({ ...s, asset: a }));
+    setPicker(false);
   };
+  const quick = [
+    { id: '1', label: '1Y', from: yearsAgo(1) },
+    { id: '3', label: '3Y', from: yearsAgo(3) },
+    { id: '5', label: '5Y', from: yearsAgo(5) },
+    { id: 'all', label: 'All', from: '' },
+  ];
+  const quickId = to ? '' : (quick.find((q) => q.from === from)?.id ?? '');
+  const shareUrl = `${location.origin}${location.pathname}#s=${encodeSession(session)}`;
 
-  const fitKey = `${state.market}-${state.tf}-${start}-${end}`;
-  // Long daily histories read best on a log scale; short ones on a linear one, unless chosen.
-  const log = scale === 'auto' ? !intraday && end - start > 400 : scale === 'log';
-  const first = candles.length ? candles[0].time : null;
-  const last = candles.length ? candles[candles.length - 1].time : null;
+  const chooseView = (v: View) => {
+    setView(v);
+    document.querySelector('.main')?.scrollTo({ top: 0 });
+  };
 
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" />
-          Edgelab <small>strategy backtester</small>
+          <img src="./favicon.svg" alt="" />
+          <span>Edgelab</span>
         </div>
-        <Segmented
-          label="Market"
-          value={state.market}
-          options={MARKETS.map((m) => ({ id: m.id, label: m.short, title: `${m.name} (${m.id})` }))}
-          onChange={(m) => update({ market: m })}
-        />
-        <Segmented<Timeframe>
-          label="Timeframe"
-          value={state.tf}
-          options={TIMEFRAMES.map((t) => ({ id: t.id, label: t.label }))}
-          onChange={(tf) => update({ tf })}
-        />
-        <span className="spacer" />
-        {ready ? (
-          <span
-            className="status"
-            title={
-              ready.live
-                ? 'Topped up from the Coinbase public API in your browser'
-                : 'Coinbase could not be reached, so the bundled data is used'
-            }
-          >
-            <span className={`dot${ready.live ? ' live' : ''}`} />
-            {ready.live ? 'Live from Coinbase' : 'Saved data'} · last candle {date(last!, intraday)}
-            <button
-              type="button"
-              className="icon-btn"
-              onClick={refresh}
-              disabled={refreshing}
-              aria-label="Check for new candles"
-              title="Check for new candles"
-            >
-              <Icon name="refresh" />
-            </button>
-          </span>
-        ) : null}
-        <button type="button" className="btn" onClick={share}>
-          <Icon name="link" /> Share
+        <button className="asset-btn" onClick={() => setPicker(true)} aria-label={`Market: ${asset.display}. Change market`}>
+          <AssetIcon a={asset} />
+          <span className="sym">{asset.display}</span>
+          <span className="name">{assetTitle(asset)}</span>
+          <kbd>⌘K</kbd>
         </button>
+        <div className="top-tf">
+          {asset.source === 'csv' ? (
+            <span className="chip">{series ? granularityLabel(series.granularity) : 'File'}</span>
+          ) : (
+            <Seg label="Timeframe" value={tfLoad} onChange={(v: Timeframe) => setSession((s) => ({ ...s, tf: v }))} options={TIMEFRAMES.map((t) => ({ id: t.id, label: t.label, disabled: !tfs.includes(t.id), title: !tfs.includes(t.id) ? 'Live in the Android app' : undefined }))} />
+          )}
+        </div>
+        <nav className="modes" role="tablist" aria-label="Mode">
+          {MODES.map((m) => (
+            <button key={m.id} role="tab" aria-selected={mode === m.id} onClick={() => chooseView(m.id)}>
+              <m.icon />
+              <span>{m.label}</span>
+            </button>
+          ))}
+        </nav>
       </header>
 
-      <div className="layout">
-        <aside className={`sidebar${settingsOpen ? '' : ' collapsed'}`}>
-          <button type="button" className="settings-toggle" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((o) => !o)}>
-            Strategy and settings <span>{settingsOpen ? 'Hide' : `${strategy.name} · change`}</span>
-          </button>
-          <Controls state={state} first={first} last={last} onChange={update} />
+      <div className="body" data-view={view}>
+        <aside className="rail" aria-label="Strategy">
+          <Builder strategy={strategy} onChange={setStrategy} onCode={() => chooseView('code')} canUndo={past.length > 0} canRedo={future.length > 0} onUndo={undo} onRedo={redo} />
         </aside>
-
         <main className="main">
-          {loadError ? <div className="warning">{loadError}</div> : null}
-          {!ready || !result ? (
-            <div className="card empty">
-              <div className="spinner" />
-              Loading {market.name} candles…
+          {mode === 'backtest' || mode === 'lab' ? (
+            <div className="main-inner" style={{ marginBottom: 18 }}>
+              <div className="toolbar">
+                <span className="status">
+                  <span className={`dot ${loadError ? 'off' : series?.live ? 'live' : 'warn'}`} />
+                  {loading ? 'Loading prices…' : loadError ? 'No data' : series ? `${SOURCE_LABEL[series.asset.source]}${series.live ? ' · live' : ''} · ${series.candles.length.toLocaleString('en-US')} bars${series.note ? ` · ${series.note}` : ''}` : ''}
+                </span>
+                {asset.source !== 'csv' ? (
+                  <button className="icon-btn sm" title="Reload prices" aria-label="Reload prices" onClick={() => setReload((r) => r + 1)}>
+                    <RefreshCw />
+                  </button>
+                ) : null}
+                <span className="grow" />
+                <Seg label="Period" value={quickId} onChange={(id) => setSession((s) => ({ ...s, from: quick.find((q) => q.id === id)!.from, to: '' }))} options={quick.map((q) => ({ id: q.id, label: q.label }))} />
+                <input className="input date" type="date" aria-label="Start date" value={from} max={to || undefined} onChange={(e) => setSession((s) => ({ ...s, from: e.target.value }))} />
+                <span className="muted to-date">to</span>
+                <input className="input date to-date" type="date" aria-label="End date" value={to} min={from || undefined} onChange={(e) => setSession((s) => ({ ...s, to: e.target.value }))} />
+              </div>
+              {loadError ? <div className="note bad">{loadError}</div> : null}
+              {result && 'error' in result ? <div className="note warn">{result.error}</div> : null}
             </div>
-          ) : (
-            <>
-              <div className="title-row">
-                <div>
-                  <h1>
-                    {strategy.name} on {market.name}
-                  </h1>
-                  <p>
-                    {state.market} · {TIMEFRAMES.find((t) => t.id === state.tf)!.label} candles · {date(candles[start].time, intraday)} to{' '}
-                    {date(candles[end].time, intraday)} · {end - start + 1} bars ·{' '}
-                    {state.settings.direction === 'both' ? 'long & short' : 'long only'}
-                  </p>
+          ) : null}
+
+          {mode === 'backtest' ? (
+            run && result && 'plots' in result ? (
+              <div className="main-inner">
+                <Hero r={run} title={`${strategy.name} · ${asset.display} ${asset.source === 'csv' ? granularityLabel(run.granularity) : tf}`} />
+                <Panel
+                  title="Price and trades"
+                  sub={`${run.bt.trades.length} trades · arrows are entries, dots are exits`}
+                  actions={
+                    <div className="field">
+                      <span className="label">Log scale</span>
+                      <Toggle label="Log scale" on={log} onChange={setLog} />
+                    </div>
+                  }
+                  bodyClass="panel-body"
+                >
+                  <PriceChart ref={chartRef} candles={shown!.candles} plots={shown!.plots} trades={run.bt.trades} intraday={intraday} log={log} sync={sync} fitKey={`${asset.id}|${tf}|${from}|${to}`} />
+                </Panel>
+                <section className="panel">
+                  <div className="tabs" role="tablist">
+                    {(
+                      [
+                        ['trades', `Trades (${run.bt.trades.length})`],
+                        ['monthly', 'Monthly returns'],
+                        ['stats', 'All statistics'],
+                        ['exits', 'How trades ended'],
+                        ['words', 'Rules in words'],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="panel-body">
+                    {tab === 'trades' ? <TradesTable trades={run.bt.trades} granularity={run.granularity} onPick={(t) => chartRef.current?.focus(t.entryTime, t.exitTime)} /> : null}
+                    {tab === 'monthly' ? <MonthlyTable r={run} /> : null}
+                    {tab === 'stats' ? <StatsList st={run.stats} /> : null}
+                    {tab === 'exits' ? <ExitBreakdown st={run.stats} /> : null}
+                    {tab === 'words' ? <p className="prose">{describe(strategy)}</p> : null}
+                  </div>
+                </section>
+                <p className="muted" style={{ fontSize: 12, textAlign: 'center' }}>
+                  Signals use closed bars and fill at the next open. Past results don’t promise future ones. Data: {SOURCE_LABEL[asset.source]}, through {isoDay(run.candles[run.bt.end].time)}.
+                </p>
+              </div>
+            ) : !loadError && !(result && 'error' in result) ? (
+              <div className="main-inner">
+                <div className="panel empty">
+                  <div className="spinner" />
+                  <p>Loading {asset.display}…</p>
                 </div>
               </div>
+            ) : null
+          ) : null}
 
-              <StatGrid s={result.stats} bench={result.bench} barHours={granularity / 3600} />
-
-              <section className="card" id="price-card">
-                <div className="card-head">
-                  <h2>Price and trades</h2>
-                  <Segmented
-                    label="Price scale"
-                    small
-                    value={log ? 'log' : 'linear'}
-                    options={[
-                      { id: 'linear', label: 'Linear' },
-                      { id: 'log', label: 'Log' },
-                    ]}
-                    onChange={setScale}
-                  />
-                  <div className="legend">
-                    {view.overlays.map((l) => (
-                      <span key={l.name}>
-                        <i style={{ background: l.color }} />
-                        {l.name}
-                      </span>
-                    ))}
-                    {view.oscillator ? (
-                      <span>
-                        <i style={{ background: view.oscillator.lines[0].color }} />
-                        {view.oscillator.name} (lower panel)
-                      </span>
-                    ) : null}
-                    <span>
-                      <i style={{ background: '#2BD48A' }} />
-                      Entries
-                    </span>
-                    <span>
-                      <i style={{ background: '#C9D1D9' }} />
-                      Exits
-                    </span>
-                  </div>
-                </div>
-                <PriceChart
-                  ref={chart}
-                  candles={view.candles}
-                  overlays={view.overlays}
-                  oscillator={view.oscillator}
-                  trades={result.bt.trades}
-                  intraday={intraday}
-                  log={log}
-                  sync={sync}
-                  fitKey={fitKey}
-                />
-              </section>
-
-              <section className="card">
-                <div className="card-head">
-                  <h2>Equity and drawdown</h2>
-                  <div className="legend">
-                    <span>
-                      <i style={{ background: '#C3F53C' }} />
-                      Strategy
-                    </span>
-                    <span>
-                      <i style={{ background: '#8B98A5' }} />
-                      Buy &amp; hold
-                    </span>
-                    <span>
-                      <i style={{ background: '#F2555A' }} />
-                      Drawdown (lower panel)
-                    </span>
-                  </div>
-                </div>
-                <EquityChart
-                  times={result.times}
-                  equity={result.bt.equity}
-                  benchmark={result.bt.benchmark}
-                  drawdown={result.drawdown}
-                  intraday={intraday}
-                  sync={sync}
-                  fitKey={fitKey}
-                />
-              </section>
-
-              <section className="card">
-                <div className="tabs" role="tablist">
-                  {(
-                    [
-                      ['trades', `Trades (${result.bt.trades.length})`],
-                      ['monthly', 'Monthly returns'],
-                      ['optimizer', 'Optimizer'],
-                      ['pine', 'Pine Script'],
-                    ] as [Tab, string][]
-                  ).map(([id, label]) => (
-                    <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <div className="tab-body">
-                  {tab === 'trades' ? (
-                    <TradesTable
-                      trades={result.bt.trades}
-                      intraday={intraday}
-                      barHours={granularity / 3600}
-                      fileName={`edgelab-${state.market}-${state.tf}-${strategy.id}`}
-                      onSelect={(t) => {
-                        chart.current?.focus(t.entryTime, t.exitTime);
-                        document.getElementById('price-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                      }}
-                    />
-                  ) : null}
-                  {tab === 'monthly' ? <MonthlyTable rows={result.monthly} /> : null}
-                  {tab === 'optimizer' ? (
-                    <Optimizer
-                      candles={candles}
-                      strategy={strategy}
-                      params={state.params}
-                      settings={state.settings}
-                      start={start}
-                      end={end}
-                      granularity={granularity}
-                      onApply={(params) => {
-                        update({ params });
-                        setToast('Settings applied');
-                      }}
-                    />
-                  ) : null}
-                  {tab === 'pine' ? <PineExport code={pine} /> : null}
-                </div>
-              </section>
-            </>
-          )}
-          <footer className="footer">
-            <span>
-              Market data from the{' '}
-              <a href="https://docs.cdp.coinbase.com/exchange/reference/exchangerestapi_getproductcandles" target="_blank" rel="noreferrer">
-                Coinbase Exchange API
-              </a>
-              . Charts by{' '}
-              <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">
-                TradingView Lightweight Charts™
-              </a>
-              .
-            </span>
-            <span>A demo for research and education, not financial advice. Past results don&apos;t promise future ones.</span>
-          </footer>
+          {mode === 'lab' ? run ? <RobustnessView strategy={deferred} run={run} onApply={setStrategy} /> : null : null}
+          {mode === 'compare' ? (
+            <CompareView
+              strategy={strategy}
+              asset={asset}
+              tf={tf}
+              from={from}
+              to={to}
+              custom={custom}
+              onCustom={(a) => setCustom((c) => [...c.filter((x) => x.id !== a.id), a])}
+              onOpen={(s, a, t) => {
+                setStrategy(s);
+                setSession((cur) => ({ ...cur, asset: a, tf: t }));
+                chooseView('backtest');
+              }}
+            />
+          ) : null}
+          {mode === 'live' ? <LiveView strategy={strategy} asset={asset} tf={tf} /> : null}
+          {mode === 'code' ? <CodeView strategy={strategy} shareUrl={shareUrl} from={from} onImport={setStrategy} /> : null}
         </main>
       </div>
-      {toast ? <div className="toast">{toast}</div> : null}
+
+      <nav className="tabbar" role="tablist" aria-label="Sections">
+        {(
+          [
+            ['strategy', 'Strategy', SlidersHorizontal],
+            ['backtest', 'Results', BarChart3],
+            ['lab', 'Lab', FlaskConical],
+            ['compare', 'Compare', Swords],
+            ['live', 'Live', Radio],
+          ] as const
+        ).map(([id, label, Icon]) => (
+          <button key={id} role="tab" aria-selected={view === id || (id === 'backtest' && view === 'code')} onClick={() => chooseView(id)}>
+            <Icon />
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {picker ? <AssetPicker onPick={setAsset} onClose={() => setPicker(false)} custom={custom} onCustom={(a) => setCustom((c) => [...c.filter((x) => x.id !== a.id), a])} /> : null}
+      <Toaster />
     </div>
   );
 }
