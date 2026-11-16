@@ -14,7 +14,7 @@ const browser = await chromium.launch();
 const wait = (p, ms) => p.waitForTimeout(ms);
 
 async function open(viewport, scale = 2) {
-  const p = await browser.newPage({ viewport, deviceScaleFactor: scale });
+  const p = await browser.newPage({ viewport, deviceScaleFactor: scale, locale: 'en-US', timezoneId: 'UTC' });
   p.on('pageerror', (e) => console.error('page error:', e.message));
   await p.goto(URL, { waitUntil: 'networkidle' });
   await p.evaluate(() => localStorage.clear());
@@ -107,7 +107,7 @@ try {
   await p.getByRole('tab', { name: 'Live' }).click();
   await wait(p, 600);
   await p.getByRole('button', { name: 'From a month ago' }).click();
-  await p.getByRole('button', { name: /^Start / }).click();
+  await p.getByRole('button', { name: /^Start .+ on / }).click();
   await wait(p, 12000);
   await shot(p, 'live');
   await p.close();

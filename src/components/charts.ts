@@ -35,6 +35,8 @@ export function chartOptions(intraday: boolean): DeepPartial<ChartOptions> {
       horzLine: { color: '#b9bdc8', labelBackgroundColor: THEME.ink },
     },
     handleScale: { axisPressedMouseMove: { time: true, price: true } },
+    // Some systems report locales like "en-US@posix" that Intl rejects; dates and numbers are formatted in English anyway.
+    localization: { locale: 'en-US' },
   };
 }
 

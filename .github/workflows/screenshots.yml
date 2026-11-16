@@ -25,6 +25,7 @@ jobs:
       - run: npm run build
       - run: node scripts/shots.mjs
       - name: Commit the screenshots
+        if: always()
         run: |
           git config user.name "Randy Kundinger"
           git config user.email "neomaverick1@users.noreply.github.com"
