@@ -1,3 +1,4 @@
+// Run with `node scripts/shots.mjs` after `npm run data && npm run build`.
 // Takes the README screenshots from a production build with real market data (run by the Screenshots workflow).
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
