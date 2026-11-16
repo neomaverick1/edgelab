@@ -17,6 +17,7 @@ import {
   type RuleGroup,
   type Strategy,
 } from './rules';
+import SOURCE from './english.ts?raw';
 
 export interface ParseResult {
   strategy: Strategy;
@@ -458,8 +459,69 @@ export function normalizeEnglish(input: string): string {
  * Turns the many ways traders say things into the forms the reader knows, before anything is split up.
  * Each line is one family of phrasing; the tests in english-anything.test.ts hold real sentences for each.
  */
+// Words the reader knows. A typed word that isn't one of these (or an everyday English word) is matched to the
+// closest of these, so "bolinger", "stocastic", "abvoe", "crosess" and "avrage" still read.
+const VOCAB = (
+  'buy sell short long exit enter cover close closes closed open high low price volume when if and or above below over under ' +
+  'crosses cross crossed rises falls drops dips touches hits breaks bounces rejects pulls back rising falling is are ' +
+  'rsi macd ema sma wma hma vwap atr adx cci mfi roc stochastic stoch bollinger band bands upper lower middle supertrend parabolic sar ' +
+  'ichimoku cloud keltner donchian channel williams momentum trend uptrend downtrend oversold overbought average moving simple exponential weighted ' +
+  'histogram signal line stop loss take profit target trailing trail percent day days bar bars candle candles green red higher lower ' +
+  'golden death breakout pullback bounce rejection gap gaps relative spike spikes strong weak positive negative bullish bearish then after ' +
+  'stays trades period ema sma asset stock coin pair market bitcoin ethereum crypto risk position size half rest breakeven times row'
+).split(' ');
+const PLAIN = new Set(
+  ('the a an of to in on at it its my is it\'s be by for with as from that this than then also both all any each every just only ' +
+    'i we you he she they me us hey hi hello yo okay thanks bitcoin btc eth stock stocks shares coin want would like should will can could please lets let get got goes go going went make makes made ' +
+    'do does did not no yes more less most least much many few new old first last next same other some once whenever after before ' +
+    'up down out into onto off again still while until till about around near far back time times row way').split(' '),
+);
+// Every word the reader itself uses (in its patterns and tables) counts as correct, so "fast", "slow", "dip",
+// "flips" or "slopes" are never "corrected" into something else.
+const KNOWN = new Set([...VOCAB, ...PLAIN, ...(SOURCE.replace(/\/\/.*$/gm, '').toLowerCase().match(/[a-z]{3,}/g) ?? [])]);
+const VOCAB_SET = new Set(VOCAB);
+const CANDIDATES = [...new Set([...VOCAB, ...PLAIN])].filter((w) => w.length >= 3);
+function fixTypos(text: string): string {
+  const dist = (a: string, b: string) => {
+    const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)] as number[]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++)
+      for (let j = 1; j <= b.length; j++) {
+        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+      }
+    return d[a.length][b.length];
+  };
+  return text.replace(/[a-z]{3,}/g, (w) => {
+    if (KNOWN.has(w)) return w;
+    const max = w.length <= 4 ? 1 : w.length <= 7 ? 2 : 3;
+    // Closest word wins; on a tie, prefer one that starts with the same letter, then one the typed word is the start
+    // of ("los" is "loss", not "low"), then the longer one.
+    let best = '';
+    let score = Infinity;
+    for (const v of CANDIDATES) {
+      if (Math.abs(v.length - w.length) > max) continue;
+      const dd = dist(w, v);
+      if (dd > max) continue;
+      const sc = dd * 8 + (v[0] === w[0] ? 0 : 4) + (v.startsWith(w) ? 0 : 1) + (VOCAB_SET.has(v) ? 0 : 2) + (v.length >= w.length ? 0 : 1);
+      if (sc < score) {
+        score = sc;
+        best = v;
+      }
+    }
+    return best || w;
+  });
+}
+
 function phrasebook(text: string): string {
+  text = fixTypos(text);
   const R: [RegExp, string][] = [
+    // greetings, requests and manners: "hey can you make me a strategy that buys when ..."
+    [/^\s*(?:hey|hi|hello|yo|ok|okay|so|um|uh)\b[\s,!]*/g, ' '],
+    [/^\s*(?:(?:can|could|would|will) you |please |pls |plz )*(?:make|build|create|write|give|set up|setup|code|design)(?: me| us)? (?:a |an |the )?(?:simple |basic |quick )?(?:strategy|strat|bot|system|algo|setup|rule|backtest)?\s*(?:that |which |to |where |so it |for )?/g, ' '],
+    [/\s*\b(?:please|pls|plz|thanks|thank you|thx)\b[.!]?/g, ''],
+    [/\b(buy|sell|short)s\b/g, '$1'],
+    [/\bbuy low,? (?:and )?sell high\b/g, 'buy when rsi is below 30, sell when rsi is above 70'],
     // filler and word numbers
     [/^\s*(?:i want to|i'd like to|i would like to|i wanna|i'll|i will|please|let's|lets|we|you should|should)\s+/g, ' '],
     [/\bzero\b/g, '0'], [/\bten\b/g, '10'], [/\btwenty\b/g, '20'], [/\bthirty\b/g, '30'], [/\bfifty\b/g, '50'], [/\bseventy\b/g, '70'], [/\beighty\b/g, '80'],
@@ -482,6 +544,15 @@ function phrasebook(text: string): string {
     // sentence starts
     [/\b(buy|go long|long|enter long|sell|short|go short|exit|cover)( the dip)? (?:after(?! \d)|as soon as|once|whenever|every time)\b/g, '$1 when'],
     [/\bbuy the dip\b/g, 'buy'],
+    // what is being bought doesn't change the rule: "buy bitcoin when", "sell my shares if"
+    [/\b(buy|sell|short)\s+(?!when\b|if\b|on\b|at\b|after\b|once\b|as\b|whenever\b|low\b|high\b|and\b|above\b|below\b|over\b|under\b)(?:the |some |my |more |all )?[a-z0-9]+\s+(?=when |if |once |whenever )/g, '$1 '],
+    // "rsi ... sell when it goes over 70": "it" is the oscillator named earlier
+    [/\b(rsi|stoch|stochastic|cci|mfi|williams %r|adx)\b(.*?\bwhen )(?:it|its|it's|it is)\b(?=\s+(?:is |goes |gets |crosses |moves |rises |drops |falls |climbs )?(?:back )?(?:above|over|under|below) \d)/g, '$1$2$1'],
+    // "above the 20 sma, sell when its below": below the same average
+    [/\b((?:sma|ema|wma|hma|ma) \d+|\d+ (?:sma|ema|wma|hma|ma|day sma|day ema)|vwap)\b(.*?\bwhen )(?:it'?s|it is|price is|price's) (above|below|over|under)(?=\s*(?:,|$))/g, '$1$2price is $3 $1'],
+    [/\brsi (?:is |gets |goes )?(?:low|really low|very low)\b/g, 'rsi is below 30'],
+    [/\brsi (?:is |gets |goes )?(?:high|really high|very high)\b/g, 'rsi is above 70'],
+    [/\bbreaks? out (?:of|from|past|through) /g, 'crosses above '],
     [/\b(buy|go long|long|enter long|short|go short) after (?=\d+ (?:red|green|up|down|white|black|rising|falling|higher|lower) )/g, '$1 when '],
     [/\b(?:price |it |the price )?gaps? up\b/g, 'open is above the 1 bar high'],
     [/\b(?:price |it |the price )?gaps? down\b/g, 'open is below the 1 bar low'],
@@ -515,6 +586,8 @@ function phrasebook(text: string): string {
     [/\bcross(?:es|ed)? down\b/g, 'crosses below'],
     // "x crosses y" with no direction means crossing above
     [/\bcross(?:es|ed) (?!above|below|over|under|up|down|back)/g, 'crosses above '],
+    // "A crosses B ... when it crosses back": the same two lines the other way
+    [/\b((?:the )?(?:\d+ [a-z]+|[a-z]+ \d+)) crosses (above|below) ((?:the )?(?:\d+ [a-z]+|[a-z]+ \d+))(.*?\bwhen )(?:it|they) cross(?:es)? back(?: (?:above|below|over|under|up|down))?\b/g, (_m: string, a: string, d: string, b: string, mid: string) => `${a} crosses ${d} ${b}${mid}${a} crosses ${d === 'above' ? 'below' : 'above'} ${b}`] as unknown as [RegExp, string],
     // fast and slow averages, bare "the 50" next to "the 200"
     [/\bfast (ema|sma|ma|moving average)\b/g, '$1 9'],
     [/\bslow (ema|sma|ma|moving average)\b/g, '$1 21'],
@@ -525,7 +598,7 @@ function phrasebook(text: string): string {
     // risk
     [/\btrail(?:ing)? (?:the |my )?stop(?: loss)? (?:at|by|of)? ?/g, 'trailing stop '],
   ];
-  for (const [re, to] of R) text = text.replace(re, to);
+  for (const [re, to] of R) text = text.replace(re, to as string);
   return text.replace(/\s+/g, ' ');
 }
 
