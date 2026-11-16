@@ -2,8 +2,6 @@ apply plugin: 'com.android.application'
 
 android {
     namespace = "com.neomaverick.edgelab"
-    // The built-in AI model is stored as is, so the app can read it straight from the APK.
-    androidResources { noCompress += ['onnx'] }
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "com.neomaverick.edgelab"

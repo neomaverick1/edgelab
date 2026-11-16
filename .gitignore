@@ -25,3 +25,6 @@ dist-ssr
 
 # Generated in CI by `npm run data`
 public/data/markets/
+
+# The built-in AI model, fetched in CI by scripts/fetch-ai-model.sh
+public/models/

@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { Capacitor } from '@capacitor/core';
-
 import type { AiReply, AiRequest } from '../workers/ai.worker';
-
-/** The phone apps carry the AI model inside the app; the website downloads it once. */
-export const aiBuiltIn = () => Capacitor.isNativePlatform();
 
 export type AiState = 'off' | 'loading' | 'ready' | 'error';
 
@@ -28,11 +23,6 @@ function getWorker() {
     else if (m.type === 'ready') {
       state = 'ready';
       device = m.device;
-      try {
-        localStorage.setItem('edgelab-ai', '1');
-      } catch {
-        /* storage off */
-      }
     } else if (m.type === 'rewrite') {
       waiting.get(m.id)?.(m.text);
       waiting.delete(m.id);
@@ -50,20 +40,7 @@ function getWorker() {
   return worker;
 }
 
-/** Download size shown before the first download: the GPU model is bigger. */
-export const aiDownloadSize = () => ((navigator as Navigator & { gpu?: unknown }).gpu ? 'about 1.2 GB' : 'about 500 MB');
-
-/** True once the model has been downloaded on this device before (it's kept in the browser cache). */
-export function aiDownloaded() {
-  if (aiBuiltIn()) return true;
-  try {
-    return localStorage.getItem('edgelab-ai') === '1';
-  } catch {
-    return false;
-  }
-}
-
-/** The built-in AI, shared by every component. It downloads once and then runs offline. */
+/** The built-in AI, shared by every component. It ships inside the app and runs offline. */
 export function useAi() {
   const [, force] = useState(0);
   const mounted = useRef(true);
@@ -81,7 +58,7 @@ export function useAi() {
     progress = 0;
     error = '';
     emit();
-    getWorker().postMessage({ type: 'load', builtIn: aiBuiltIn() } satisfies AiRequest);
+    getWorker().postMessage({ type: 'load' } satisfies AiRequest);
   }, []);
   const rewrite = useCallback(
     (text: string) =>

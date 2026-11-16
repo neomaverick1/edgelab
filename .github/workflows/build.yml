@@ -28,6 +28,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+      - name: Put the built-in AI model in place for its test
+        run: bash scripts/fetch-ai-model.sh
       - run: npm test
 
   web:
@@ -43,6 +45,8 @@ jobs:
       - run: npm ci
       - name: Download the market snapshot for the web version
         run: npm run data
+      - name: Put the built-in AI model in the app
+        run: bash scripts/fetch-ai-model.sh
       - run: npm run build
       - name: Get the APK from this build
         if: needs.android.result == 'success'
@@ -86,10 +90,10 @@ jobs:
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
       - run: npm ci
+      - name: Put the built-in AI model in the app
+        run: bash scripts/fetch-ai-model.sh
       - name: Build the web app and copy it into the Android project
         run: npm run android
-      - name: Put the built-in AI model inside the phone app
-        run: bash scripts/fetch-ai-model.sh android/app/src/main/assets/public/models
       - name: Build the phone APK (demo key, so each build installs over the last)
         working-directory: android
         env:
@@ -101,8 +105,6 @@ jobs:
           UPLOAD_JKS_B64: ${{ secrets.UPLOAD_JKS_B64 }}
         run: |
           if [ -n "$UPLOAD_JKS_B64" ]; then echo "$UPLOAD_JKS_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"; echo "UPLOAD_KEYSTORE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"; fi
-      - name: Leave the model out of the Play bundle (over Play's size limit; the app downloads it there)
-        run: rm -rf android/app/src/main/assets/public/models
       - name: Build the Google Play bundle
         working-directory: android
         env:
@@ -130,10 +132,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Put the built-in AI model in the app
+        run: bash scripts/fetch-ai-model.sh
       - name: Build the web app and copy it into the iOS project
         run: npm run ios
-      - name: Put the built-in AI model inside the iPhone app
-        run: bash scripts/fetch-ai-model.sh ios/App/App/public/models
       - name: Build the iOS app (simulator, unsigned)
         run: |
           xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \

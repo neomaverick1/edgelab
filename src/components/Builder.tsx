@@ -3,7 +3,7 @@ import { useMemo, useRef, useState } from 'react';
 
 import { INDICATORS, SOURCES, indicator, type Group as IndGroup, type Source } from '../lib/catalog';
 import { describe as describeStrategy, parseEnglish, prepareEnglish, readPhrase, type ParseResult } from '../lib/english';
-import { aiBuiltIn, aiDownloaded, aiDownloadSize, useAi } from './useAi';
+import { useAi } from './useAi';
 import { ENGLISH_EXAMPLES, PRESETS } from '../lib/presets';
 import {
   blankStrategy,
@@ -157,7 +157,7 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
     if (!value.trim()) return;
     const id = ++run.current;
     const first = parseEnglish(value, strategy);
-    if (!first.unknown.length || !aiDownloaded()) {
+    if (!first.unknown.length) {
       apply(first);
       return;
     }
@@ -197,7 +197,7 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
           />
           <div className="bar">
             <span className="muted" style={{ fontSize: 12 }}>
-              {busy ? (ai.state === 'loading' && !aiBuiltIn() ? `Starting the AI… ${Math.round(ai.progress * 100)}%` : 'Reading it…') : aiDownloaded() ? 'Built-in AI · works offline' : 'Works offline'}
+              {busy ? 'Reading it…' : 'Built-in AI · works offline'}
             </span>
             <button className="btn gold sm" onClick={() => void build()} disabled={!text.trim() || busy}>
               {busy ? <Brain /> : <Sparkles />} {busy ? 'Reading…' : 'Build rules'}
@@ -221,25 +221,6 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
               </li>
             ))}
           </ul>
-          {unknown.length && !aiDownloaded() ? (
-            <div className="ai-box">
-              <Brain />
-              <div>
-                <b>Turn on the built-in AI to read anything</b>
-                <p className="muted">It runs in this browser, so nothing leaves your device. The phone apps have it built in; here it downloads once ({aiDownloadSize()}).</p>
-                {ai.state === 'error' ? <p style={{ color: '#8f2236' }}>The AI couldn’t start: {ai.error}</p> : null}
-                {ai.state === 'loading' ? (
-                  <div className="progress" style={{ marginTop: 8 }}>
-                    <i style={{ width: `${Math.round(ai.progress * 100)}%` }} />
-                  </div>
-                ) : (
-                  <button className="btn gold sm" onClick={ai.start}>
-                    <Brain /> {ai.state === 'error' ? 'Try again' : 'Turn it on'}
-                  </button>
-                )}
-              </div>
-            </div>
-          ) : null}
         </div>
       ) : (
         <div className="examples">
