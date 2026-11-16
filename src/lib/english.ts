@@ -210,13 +210,31 @@ const PATTERNS: [RegExp, string][] = [
 
 type Node = Rule | RuleGroup;
 
+/** Rewrites everyday trader phrasing into the forms below: "bitcoin hits the lower band" → "price crosses below lower band". */
+function everyday(input: string): string {
+  let s = input
+    .replace(/^(?:the )?(?:price of )?(?:bitcoin|btc|ethereum|eth|the stock|the coin|the market|the asset|the pair|it'?s? price|the chart)(?: price)?\b/, 'price')
+    .replace(/\b(?:normal|usual|avg|typical)\b(?: volume)?/g, 'average')
+    .replace(/\baverage volume\b/g, 'average')
+    .replace(/\s*>\s*/g, ' is above ')
+    .replace(/\s*<\s*/g, ' is below ');
+  // "touches / hits / tags / reaches" go toward whatever is named: down to a lower band or low, up to an upper band or high.
+  s = s.replace(/\s(?:touches|touched|hits|tags|reaches|tests|wicks to|wicks into)\s(.+)$/, (_, target: string) => (/\b(?:lower|low|bottom|support|floor)\b/.test(target) ? ` crosses below ${target}` : ` crosses above ${target}`));
+  // More verbs for crossing.
+  s = s
+    .replace(/\s(?:rises|goes|gets|jumps|climbs|pops|moves back|gets back|goes back|crosses back|climbs back|rallies|breaks back)\s(?:back\s)?(above|over)\s/, ' crosses above ')
+    .replace(/\s(?:dips|goes|gets|slips|sinks|tanks|dumps|moves back|gets back|goes back|crosses back|drops back|falls back|breaks)\s(?:back\s)?(below|under)\s/, ' crosses below ');
+  return s.replace(/\s+/g, ' ').trim();
+}
+
 function condition(raw: string): Node | null {
-  const s = raw
+  let s = raw
     .replace(/^(?:when|if|once|on|while|as soon as|and|then)\s+/, '')
     .replace(/^(?:a|an)\s+/, '')
     .replace(/\s+(?:happens|occurs|prints|forms|appears)$/, '')
     .trim();
   if (!s) return null;
+  s = everyday(s);
   let m: RegExpMatchArray | null;
 
   if (/^golden cross$/.test(s)) return rule(ind('sma', [50]), 'xup', ind('sma', [200]));
