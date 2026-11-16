@@ -436,6 +436,21 @@ function extractRisk(text: string, s: Strategy, notes: string[]): string {
   return t;
 }
 
+/** Lower-cases and evens out punctuation. Parts the reader can't understand are reported in this form. */
+export function normalizeEnglish(input: string): string {
+  return ` ${input.toLowerCase().replace(/[“”]/g, '"').replace(/[‘’]/g, "'")} `
+    .replace(/(\d),(\d{3})/g, '$1$2')
+    .replace(/(\d)\.(?!\d)/g, '$1 ')
+    .replace(/[;\n!]+|\.(?=\s|$)/g, ' , ')
+    .replace(/\s+/g, ' ');
+}
+
+/** Reads one condition on its own: the rules it makes, or null when it can't be read. */
+export function readCondition(text: string): string | null {
+  const r = parseEnglish(`Buy when ${text}.`);
+  return r.unknown.length || !r.strategy.longEntry.items.length ? null : describeGroup(r.strategy.longEntry);
+}
+
 export function parseEnglish(input: string, base?: Strategy): ParseResult {
   const s = base ? structuredClone(base) : blankStrategy('From English');
   s.longEntry = group();
@@ -448,11 +463,7 @@ export function parseEnglish(input: string, base?: Strategy): ParseResult {
   const understood: string[] = [];
   const unknown: string[] = [];
 
-  let text = ` ${input.toLowerCase().replace(/[“”]/g, '"').replace(/[‘’]/g, "'")} `
-    .replace(/(\d),(\d{3})/g, '$1$2')
-    .replace(/(\d)\.(?!\d)/g, '$1 ')
-    .replace(/[;\n!]+|\.(?=\s|$)/g, ' , ')
-    .replace(/\s+/g, ' ');
+  let text = normalizeEnglish(input);
   text = extractRisk(text, s, understood);
 
   // Find section starts, then give each section the text up to the next one.
