@@ -24,6 +24,19 @@ export interface ParseResult {
   strategy: Strategy;
   understood: string[]; // short notes on what was read
   unknown: string[]; // fragments that couldn't be read
+  questions: Question[]; // things that could mean two different strategies: the box asks instead of guessing
+}
+
+/** Something the reader won't guess: the box asks the trader, with choices. */
+export interface Question {
+  id: 'sell';
+  text: string;
+  options: { label: string; value: string }[];
+}
+
+export interface ReadOptions {
+  sell?: 'exit' | 'short'; // what "sell when" means once the trader has said
+  learned?: [string, string][]; // the trader's own corrections: their words -> what they mean
 }
 
 type Section = 'longEntry' | 'longExit' | 'shortEntry' | 'shortExit' | 'filter';
@@ -133,7 +146,9 @@ export function parseOperand(raw: string): Operand | null {
   const withAgo = (o: IndOperand): IndOperand => (ago ? { ...o, ago } : o);
 
   // "20-day high", "55 bar low", "highest high of 20 bars", "20 day highest close"
-  const hl = s.match(new RegExp(`^${NUM}${UNIT} (high|low|highest high|lowest low)$`)) ?? s.match(new RegExp(`^(high|low|highest high|lowest low) (?:of |over )?(?:the )?(?:last )?${NUM}${UNIT}$`));
+  const hl =
+    s.match(new RegExp(`^${NUM}${UNIT} (high|low|highest high|lowest low)$`)) ??
+    s.match(new RegExp(`^(high|low|highest high|lowest low) (?:of |over )?(?:the )?(?:last )?${NUM}${UNIT}$`));
   if (hl) {
     const [n, word] = /^\d/.test(hl[1]) ? [+hl[1], hl[2]] : [+hl[2], hl[1]];
     return withAgo(ind('donchian', [n], { out: word.includes('high') ? 'upper' : 'lower' }));
@@ -156,7 +171,10 @@ export function parseOperand(raw: string): Operand | null {
   const trail = s.match(new RegExp(`^(.*?)[ -]${NUM}(?:\\s*[,/]\\s*${NUM})?(?:\\s*[,/]\\s*${NUM})?${UNIT}$`));
   if (paren) {
     name = paren[1].trim();
-    params = paren[2].split(/[,\s]+/).filter(Boolean).map(Number);
+    params = paren[2]
+      .split(/[,\s]+/)
+      .filter(Boolean)
+      .map(Number);
   } else if (mid && !/^(?:bars?|days?|candles?|periods?|hours?)\b/.test(mid[3])) {
     name = `${mid[1].trim()} ${mid[3].trim()}`;
     params = mid[2].split(/\s*[,/]\s*/).map(Number);
@@ -167,7 +185,10 @@ export function parseOperand(raw: string): Operand | null {
     name = trail[1].trim();
     params = [trail[2], trail[3], trail[4]].filter((x) => x !== undefined).map(Number);
   }
-  name = name.replace(/^(?:a|an) /, '').replace(/ line$/, (m) => (/macd|signal|supertrend/.test(name) ? m : '')).trim();
+  name = name
+    .replace(/^(?:a|an) /, '')
+    .replace(/ line$/, (m) => (/macd|signal|supertrend/.test(name) ? m : ''))
+    .trim();
 
   for (const n of NAMES) {
     if (!n.re.test(name)) continue;
@@ -199,7 +220,15 @@ export function parseOperand(raw: string): Operand | null {
 // ---------------------------------------------------------------------------------------------------------------
 // Conditions
 
-const OVERSOLD: Record<string, [number, number]> = { rsi: [30, 70], stoch: [20, 80], stochrsi: [20, 80], mfi: [20, 80], cci: [-100, 100], willr: [-80, -20], zscore: [-2, 2] };
+const OVERSOLD: Record<string, [number, number]> = {
+  rsi: [30, 70],
+  stoch: [20, 80],
+  stochrsi: [20, 80],
+  mfi: [20, 80],
+  cci: [-100, 100],
+  willr: [-80, -20],
+  zscore: [-2, 2],
+};
 
 const PATTERNS: [RegExp, string][] = [
   [/bullish engulfing/, 'bullEngulf'],
@@ -215,25 +244,38 @@ type Node = Rule | RuleGroup;
 /** True when words name the market itself rather than an indicator: "asset", "the stock", "usd/jpy", "nvda", "it". */
 function isSubject(words: string): boolean {
   const w = words.trim().replace(/^(?:the|this|that|my|our|your)\s+/, '');
-  if (!w || w.split(/\s+/).length > 4 || /\d/.test(w.replace(/[a-z]+\/?[a-z]*/g, '')) && /\d/.test(w)) return false;
+  if (!w || w.split(/\s+/).length > 4 || (/\d/.test(w.replace(/[a-z]+\/?[a-z]*/g, '')) && /\d/.test(w))) return false;
   if (parseOperand(w)) return false;
-  return !/\b(?:rsi|macd|ema|sma|wma|hma|vwap|atr|adx|cci|mfi|roc|stoch|stochastic|bollinger|band|bands|volume|supertrend|sar|average|line|signal|histogram|high|low|open)\b/.test(w);
+  return !/\b(?:rsi|macd|ema|sma|wma|hma|vwap|atr|adx|cci|mfi|roc|stoch|stochastic|bollinger|band|bands|volume|supertrend|sar|average|line|signal|histogram|high|low|open)\b/.test(
+    w,
+  );
 }
 
 /** Rewrites everyday trader phrasing into the forms below: "bitcoin hits the lower band" → "price crosses below lower band". */
 function everyday(input: string): string {
   let s = input
-    .replace(/^(?:the )?(?:price of )?(?:bitcoin|btc|ethereum|eth|the stock|the coin|the market|the asset|the pair|it'?s? price|the chart)(?: price)?\b/, 'price')
+    .replace(
+      /^(?:the )?(?:price of )?(?:bitcoin|btc|ethereum|eth|the stock|the coin|the market|the asset|the pair|it'?s? price|the chart)(?: price)?\b/,
+      'price',
+    )
     .replace(/\b(?:normal|usual|avg|typical)\b(?: volume)?/g, 'average')
     .replace(/\baverage volume\b/g, 'average')
     .replace(/\s*>\s*/g, ' is above ')
     .replace(/\s*<\s*/g, ' is below ');
   // "touches / hits / tags / reaches" go toward whatever is named: down to a lower band or low, up to an upper band or high.
-  s = s.replace(/\s(?:touches|touched|hits|tags|reaches|tests|wicks to|wicks into)\s(.+)$/, (_, target: string) => (/\b(?:lower|low|bottom|support|floor)\b/.test(target) ? ` crosses below ${target}` : ` crosses above ${target}`));
+  s = s.replace(/\s(?:touches|touched|hits|tags|reaches|tests|wicks to|wicks into)\s(.+)$/, (_, target: string) =>
+    /\b(?:lower|low|bottom|support|floor)\b/.test(target) ? ` crosses below ${target}` : ` crosses above ${target}`,
+  );
   // More verbs for crossing.
   s = s
-    .replace(/\s(?:rises|goes|gets|jumps|climbs|pops|moves back|gets back|goes back|crosses back|climbs back|rallies|breaks back)\s(?:back\s)?(above|over)\s/, ' crosses above ')
-    .replace(/\s(?:dips|goes|gets|slips|sinks|tanks|dumps|moves back|gets back|goes back|crosses back|drops back|falls back|breaks)\s(?:back\s)?(below|under)\s/, ' crosses below ');
+    .replace(
+      /\s(?:rises|goes|gets|jumps|climbs|pops|moves back|gets back|goes back|crosses back|climbs back|rallies|breaks back)\s(?:back\s)?(above|over)\s/,
+      ' crosses above ',
+    )
+    .replace(
+      /\s(?:dips|goes|gets|slips|sinks|tanks|dumps|moves back|gets back|goes back|crosses back|drops back|falls back|breaks)\s(?:back\s)?(below|under)\s/,
+      ' crosses below ',
+    );
   return s.replace(/\s+/g, ' ').trim();
 }
 
@@ -251,35 +293,52 @@ function condition(raw: string): Node | null {
   if (/^death cross$/.test(s)) return rule(ind('sma', [50]), 'xdn', ind('sma', [200]));
 
   for (const [re, out] of PATTERNS) if (re.test(s)) return rule(ind('pattern', [], { out }), 'gte', num(1));
-  if ((m = s.match(/^(\d+) (?:green|up|higher|white|rising) (?:candles?|bars?|closes?|days?)(?: in a row)?$/))) return rule(ind('pattern', [], { out: 'upStreak' }), 'gte', num(+m[1]));
-  if ((m = s.match(/^(\d+) (?:red|down|lower|black|falling) (?:candles?|bars?|closes?|days?)(?: in a row)?$/))) return rule(ind('pattern', [], { out: 'downStreak' }), 'gte', num(+m[1]));
+  if ((m = s.match(/^(\d+) (?:green|up|higher|white|rising) (?:candles?|bars?|closes?|days?)(?: in a row)?$/)))
+    return rule(ind('pattern', [], { out: 'upStreak' }), 'gte', num(+m[1]));
+  if ((m = s.match(/^(\d+) (?:red|down|lower|black|falling) (?:candles?|bars?|closes?|days?)(?: in a row)?$/)))
+    return rule(ind('pattern', [], { out: 'downStreak' }), 'gte', num(+m[1]));
 
   if ((m = s.match(/^(.+?) (?:is |gets |becomes |turns )?(oversold|overbought)$/))) {
     const a = parseOperand(m[1]);
-    if (a?.kind === 'ind' && OVERSOLD[a.id]) return rule(a, m[2] === 'oversold' ? 'lt' : 'gt', num(OVERSOLD[a.id][m[2] === 'oversold' ? 0 : 1]));
+    if (a?.kind === 'ind' && OVERSOLD[a.id])
+      return rule(a, m[2] === 'oversold' ? 'lt' : 'gt', num(OVERSOLD[a.id][m[2] === 'oversold' ? 0 : 1]));
   }
   if ((m = s.match(/^(?:volume )?(?:is )?(?:a )?volume spike$|^volume spikes?$/))) return rule(ind('rvol'), 'gt', num(2));
-  if ((m = s.match(/^volume (?:is )?(?:above|over|more than) (\d+(?:\.\d+)?) ?(?:x|times) (?:its |the )?(?:average|normal)/))) return rule(ind('rvol'), 'gt', num(+m[1]));
+  if ((m = s.match(/^volume (?:is )?(?:above|over|more than) (\d+(?:\.\d+)?) ?(?:x|times) (?:its |the )?(?:average|normal)/)))
+    return rule(ind('rvol'), 'gt', num(+m[1]));
   if ((m = s.match(/^supertrend (?:is |turns |flips )?(up|bullish|green|down|bearish|red)$/))) {
     const up = /up|bullish|green/.test(m[1]);
-    return rule(ind('supertrend', undefined, { out: 'dir' }), s.includes('turns') || s.includes('flips') ? (up ? 'xup' : 'xdn') : up ? 'gt' : 'lt', num(0));
+    return rule(
+      ind('supertrend', undefined, { out: 'dir' }),
+      s.includes('turns') || s.includes('flips') ? (up ? 'xup' : 'xdn') : up ? 'gt' : 'lt',
+      num(0),
+    );
   }
   if ((m = s.match(/^(.+?) (?:is )?(above|below) (?:the )?(?:ichimoku )?cloud$/))) {
     const a = parseOperand(m[1]);
     if (a?.kind === 'ind') {
       const cmp: Cmp = m[2] === 'above' ? 'gt' : 'lt';
-      return group('all', [rule(a, cmp, ind('ichimoku', undefined, { out: 'spanA' })), rule(a, cmp, ind('ichimoku', undefined, { out: 'spanB' }))]);
+      return group('all', [
+        rule(a, cmp, ind('ichimoku', undefined, { out: 'spanA' })),
+        rule(a, cmp, ind('ichimoku', undefined, { out: 'spanB' })),
+      ]);
     }
   }
-  if ((m = s.match(/^(?:it'?s |on )?(?:a )?weekdays?$/))) return group('all', [rule(ind('weekday'), 'gte', num(1)), rule(ind('weekday'), 'lte', num(5))]);
+  if ((m = s.match(/^(?:it'?s |on )?(?:a )?weekdays?$/)))
+    return group('all', [rule(ind('weekday'), 'gte', num(1)), rule(ind('weekday'), 'lte', num(5))]);
   const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   if ((m = s.match(/^(?:it'?s |on )?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)s?$/))) {
     const d = DAYS.indexOf(m[1]);
     return group('all', [rule(ind('weekday'), 'gte', num(d)), rule(ind('weekday'), 'lte', num(d))]);
   }
-  if ((m = s.match(/^(?:the )?(.+?) (?:breaks|breaks out|closes|moves|pushes)( above| over| below| under)?(?: to)? (?:a )?new (\d+)[- ]?(?:day|bar|period|hour|week)? (high|low)$/))) {
+  if (
+    (m = s.match(
+      /^(?:the )?(.+?) (?:breaks|breaks out|closes|moves|pushes)( above| over| below| under)?(?: to)? (?:a )?new (\d+)[- ]?(?:day|bar|period|hour|week)? (high|low)$/,
+    ))
+  ) {
     const a = parseOperand(m[1]);
-    if (a?.kind === 'ind') return rule(a, m[4] === 'high' ? 'xup' : 'xdn', ind('donchian', [+m[3]], { out: m[4] === 'high' ? 'upper' : 'lower' }));
+    if (a?.kind === 'ind')
+      return rule(a, m[4] === 'high' ? 'xup' : 'xdn', ind('donchian', [+m[3]], { out: m[4] === 'high' ? 'upper' : 'lower' }));
   }
   if ((m = s.match(/^(?:a )?new (\d+)[- ]?(?:day|bar|period|hour|week)? (high|low)$/))) {
     return rule(ind('price'), m[2] === 'high' ? 'xup' : 'xdn', ind('donchian', [+m[1]], { out: m[2] === 'high' ? 'upper' : 'lower' }));
@@ -292,7 +351,11 @@ function condition(raw: string): Node | null {
     const a = parseOperand(m[1]);
     if (a?.kind === 'ind') return group('all', [rule(a, 'gte', num(Math.min(+m[2], +m[3]))), rule(a, 'lte', num(Math.max(+m[2], +m[3])))]);
   }
-  if ((m = s.match(/^(.+?) (?:is |has been |keeps )?(rising|falling|going up|going down|increasing|decreasing|turning up|turning down|sloping up|sloping down|up|down)(?: (?:for|over) (?:the )?(?:last )?(\d+) (?:bars?|days?|candles?|periods?))?$/))) {
+  if (
+    (m = s.match(
+      /^(.+?) (?:is |has been |keeps )?(rising|falling|going up|going down|increasing|decreasing|turning up|turning down|sloping up|sloping down|up|down)(?: (?:for|over) (?:the )?(?:last )?(\d+) (?:bars?|days?|candles?|periods?))?$/,
+    ))
+  ) {
     const a = parseOperand(m[1]);
     if (a?.kind === 'ind') return rule(a, /rising|up|increasing/.test(m[2]) ? 'rising' : 'falling', num(0), m[3] ? { bars: +m[3] } : {});
   }
@@ -320,7 +383,16 @@ function condition(raw: string): Node | null {
     const b = parseOperand(right);
     // "rsi 14 crosses above 30" or "30 is below rsi" both work.
     if (a?.kind === 'num' && b?.kind === 'ind') {
-      const flipped: Record<Cmp, Cmp> = { gt: 'lt', lt: 'gt', gte: 'lte', lte: 'gte', xup: 'xdn', xdn: 'xup', rising: 'rising', falling: 'falling' };
+      const flipped: Record<Cmp, Cmp> = {
+        gt: 'lt',
+        lt: 'gt',
+        gte: 'lte',
+        lte: 'gte',
+        xup: 'xdn',
+        xdn: 'xup',
+        rising: 'rising',
+        falling: 'falling',
+      };
       return rule(b, flipped[cmp], a, within ? { within } : {});
     }
     // "price crosses above ema" with no period on either side → the indicator's default
@@ -362,7 +434,10 @@ const SECTION_START: [RegExp, Section][] = [
   [/\b(?:only (?:trade|take trades|enter|buy|trade it)|trade only|filter)(?: when| if|:)\s*/g, 'filter'],
   [/\b(?:buy to cover|cover(?: the short)?|exit (?:the )?shorts?|close (?:the )?shorts?)(?: when| if| on|:)?\s+/g, 'shortExit'],
   [/\b(?:sell short|short sell|go short|enter (?:a )?short|open (?:a )?short|short)(?: when| if| on| as soon as|:)\s*/g, 'shortEntry'],
-  [/\b(?:sell|exit(?: the)?(?: longs?| position| trade)?|close(?: the)?(?: longs?| position| trade)?|get out)(?: when| if| on| as soon as|:)\s*/g, 'longExit'],
+  [
+    /\b(?:sell|exit(?: the)?(?: longs?| position| trade)?|close(?: the)?(?: longs?| position| trade)?|get out)(?: when| if| on| as soon as|:)\s*/g,
+    'longExit',
+  ],
   [/\b(?:buy|go long|enter (?:a )?long|open (?:a )?long|long|enter|get in)(?: when| if| on| as soon as| the| a|:)\s*/g, 'longEntry'],
 ];
 
@@ -377,18 +452,33 @@ function extractRisk(text: string, s: Strategy, notes: string[]): string {
   const unit = (u: string): 'pct' | 'atr' | 'r' => (/atr/.test(u) ? 'atr' : /^r\b|rr|risk/.test(u.trim()) ? 'r' : 'pct');
   const U = '(%|percent|x ?atrs?|atrs?|×\\s?atr|r\\b|rr\\b)';
 
-  take(/\b(long only|longs only|only longs|short only|shorts only|only shorts|long and short|both (?:ways|directions|sides)|longs and shorts)\b/g, (m) => {
-    s.side = /and|both/.test(m[1]) ? 'both' : /short/.test(m[1]) ? 'short' : 'long';
-    notes.push(s.side === 'both' ? 'Trades long and short' : s.side === 'long' ? 'Long only' : 'Short only');
-  });
-  take(new RegExp(`\\btrail(?:ing)?(?:[- ]stop)?(?: loss)?\\s*(?:at|of|=|:)?\\s*${NUM}\\s*${U}(?: (?:once|after|when) (?:up |in profit )?${NUM}\\s*%)?`, 'g'), (m) => {
-    s.exits.trail = { on: true, unit: unit(m[2]) === 'atr' ? 'atr' : 'pct', value: +m[1], activate: m[3] ? +m[3] : 0 };
-    notes.push(`Trailing stop ${m[1]}${unit(m[2]) === 'atr' ? ' × ATR' : '%'}${m[3] ? ` after +${m[3]}%` : ''}`);
-  });
-  take(new RegExp(`\\b(?:move (?:the )?stop to )?break[- ]?even(?: stop)? (?:after|at|once|when (?:up|in profit))\\s*\\+?${NUM}\\s*(%|r\\b|percent)`, 'g'), (m) => {
-    s.exits.breakeven = { on: true, unit: /r/.test(m[2]) ? 'r' : 'pct', value: +m[1] };
-    notes.push(`Stop to breakeven after ${m[1]}${/r/.test(m[2]) ? 'R' : '%'}`);
-  });
+  take(
+    /\b(long only|longs only|only longs|short only|shorts only|only shorts|long and short|both (?:ways|directions|sides)|longs and shorts)\b/g,
+    (m) => {
+      s.side = /and|both/.test(m[1]) ? 'both' : /short/.test(m[1]) ? 'short' : 'long';
+      notes.push(s.side === 'both' ? 'Trades long and short' : s.side === 'long' ? 'Long only' : 'Short only');
+    },
+  );
+  take(
+    new RegExp(
+      `\\btrail(?:ing)?(?:[- ]stop)?(?: loss)?\\s*(?:at|of|=|:)?\\s*${NUM}\\s*${U}(?: (?:once|after|when) (?:up |in profit )?${NUM}\\s*%)?`,
+      'g',
+    ),
+    (m) => {
+      s.exits.trail = { on: true, unit: unit(m[2]) === 'atr' ? 'atr' : 'pct', value: +m[1], activate: m[3] ? +m[3] : 0 };
+      notes.push(`Trailing stop ${m[1]}${unit(m[2]) === 'atr' ? ' × ATR' : '%'}${m[3] ? ` after +${m[3]}%` : ''}`);
+    },
+  );
+  take(
+    new RegExp(
+      `\\b(?:move (?:the )?stop to )?break[- ]?even(?: stop)? (?:after|at|once|when (?:up|in profit))\\s*\\+?${NUM}\\s*(%|r\\b|percent)`,
+      'g',
+    ),
+    (m) => {
+      s.exits.breakeven = { on: true, unit: /r/.test(m[2]) ? 'r' : 'pct', value: +m[1] };
+      notes.push(`Stop to breakeven after ${m[1]}${/r/.test(m[2]) ? 'R' : '%'}`);
+    },
+  );
   take(new RegExp(`\\b(?:stop(?:[- ]?loss)?|sl|stop out)\\s*(?:at|of|=|:)?\\s*${NUM}\\s*${U}`, 'g'), (m) => {
     const u = unit(m[2]);
     s.exits.stop = { on: true, unit: u === 'atr' ? 'atr' : 'pct', value: +m[1] };
@@ -396,11 +486,25 @@ function extractRisk(text: string, s: Strategy, notes: string[]): string {
   });
   // Ladders: "take half at 2% and the rest at 5%", "take 30% off at 1R, 30% at 2R, rest at 4R"
   const ladder: { size: number | null; value: number; unit: 'pct' | 'atr' | 'r' }[] = [];
-  take(new RegExp(`\\b(?:take(?: profit)?|sell|scale out(?: of)?|close)?\\s*(half|a third|one third|a quarter|${NUM}\\s*%|the rest|rest|remainder|everything else)(?: of (?:the )?position)?(?: off)? at\\s*\\+?${NUM}\\s*${U}`, 'g'), (m) => {
-    const word = m[1];
-    const size = /half/.test(word) ? 50 : /third/.test(word) ? 33.3 : /quarter/.test(word) ? 25 : /rest|remainder|else/.test(word) ? null : parseFloat(word);
-    ladder.push({ size, value: +m[3], unit: unit(m[4]) });
-  });
+  take(
+    new RegExp(
+      `\\b(?:take(?: profit)?|sell|scale out(?: of)?|close)?\\s*(half|a third|one third|a quarter|${NUM}\\s*%|the rest|rest|remainder|everything else)(?: of (?:the )?position)?(?: off)? at\\s*\\+?${NUM}\\s*${U}`,
+      'g',
+    ),
+    (m) => {
+      const word = m[1];
+      const size = /half/.test(word)
+        ? 50
+        : /third/.test(word)
+          ? 33.3
+          : /quarter/.test(word)
+            ? 25
+            : /rest|remainder|else/.test(word)
+              ? null
+              : parseFloat(word);
+      ladder.push({ size, value: +m[3], unit: unit(m[4]) });
+    },
+  );
   take(new RegExp(`\\b(?:take[- ]?profits?|tp|profit target|targets?)\\s*(?:at|of|=|:)?\\s*\\+?${NUM}\\s*${U}`, 'g'), (m) => {
     ladder.push({ size: null, value: +m[1], unit: unit(m[2]) });
   });
@@ -408,27 +512,45 @@ function extractRisk(text: string, s: Strategy, notes: string[]): string {
     ladder.sort((a, b) => a.value - b.value);
     const fixed = ladder.reduce((a, l) => a + (l.size ?? 0), 0);
     const open = ladder.filter((l) => l.size === null).length;
-    const levels = ladder.map((l) => ({ unit: l.unit, value: l.value, size: Math.round((l.size ?? Math.max(0, 100 - fixed) / Math.max(1, open)) * 10) / 10 }));
+    const levels = ladder.map((l) => ({
+      unit: l.unit,
+      value: l.value,
+      size: Math.round((l.size ?? Math.max(0, 100 - fixed) / Math.max(1, open)) * 10) / 10,
+    }));
     s.exits.targets = { on: true, levels };
-    notes.push(`Take profit ${levels.map((l) => `${l.size}% at ${l.value}${l.unit === 'pct' ? '%' : l.unit === 'atr' ? ' × ATR' : 'R'}`).join(', ')}`);
+    notes.push(
+      `Take profit ${levels.map((l) => `${l.size}% at ${l.value}${l.unit === 'pct' ? '%' : l.unit === 'atr' ? ' × ATR' : 'R'}`).join(', ')}`,
+    );
   }
-  take(/\b(?:exit|close|sell|get out)?\s*(?:after|within|in)\s+(\d+)\s*(bars?|candles?|days?|hours?|periods?|weeks?)\b(?: if (?:nothing|it doesn't|no exit)[^,.]*)?/g, (m) => {
-    s.exits.time = { on: true, bars: +m[1] };
-    notes.push(`Time exit after ${m[1]} bars`);
-  });
+  take(
+    /\b(?:exit|close|sell|get out)?\s*(?:after|within|in)\s+(\d+)\s*(bars?|candles?|days?|hours?|periods?|weeks?)\b(?: if (?:nothing|it doesn't|no exit)[^,.]*)?/g,
+    (m) => {
+      s.exits.time = { on: true, bars: +m[1] };
+      notes.push(`Time exit after ${m[1]} bars`);
+    },
+  );
   take(/\b(?:atr|atr length|atr period)\s*(?:of|=|:)?\s*(\d+)\b/g, (m) => {
     s.exits.atrLength = +m[1];
   });
-  take(new RegExp(`\\brisk(?:ing)?\\s*${NUM}\\s*%(?: of (?:the )?(?:account|equity|capital))?(?: per trade| a trade| each trade)?`, 'g'), (m) => {
-    s.sizing.mode = 'risk';
-    s.sizing.value = +m[1];
-    notes.push(`Risk ${m[1]}% of the account per trade`);
-  });
-  take(new RegExp(`\\b(?:use|with|size|position size|invest|allocate)\\s*(?:of )?${NUM}\\s*% (?:of )?(?:the )?(?:equity|account|capital|balance|portfolio)`, 'g'), (m) => {
-    s.sizing.mode = 'equity';
-    s.sizing.value = +m[1];
-    notes.push(`Use ${m[1]}% of the account per trade`);
-  });
+  take(
+    new RegExp(`\\brisk(?:ing)?\\s*${NUM}\\s*%(?: of (?:the )?(?:account|equity|capital))?(?: per trade| a trade| each trade)?`, 'g'),
+    (m) => {
+      s.sizing.mode = 'risk';
+      s.sizing.value = +m[1];
+      notes.push(`Risk ${m[1]}% of the account per trade`);
+    },
+  );
+  take(
+    new RegExp(
+      `\\b(?:use|with|size|position size|invest|allocate)\\s*(?:of )?${NUM}\\s*% (?:of )?(?:the )?(?:equity|account|capital|balance|portfolio)`,
+      'g',
+    ),
+    (m) => {
+      s.sizing.mode = 'equity';
+      s.sizing.value = +m[1];
+      notes.push(`Use ${m[1]}% of the account per trade`);
+    },
+  );
   take(new RegExp(`\\b(?:${NUM}\\s*x\\s*leverage|leverage\\s*(?:of|=|:)?\\s*${NUM}\\s*x?)`, 'g'), (m) => {
     s.sizing.leverage = +(m[1] ?? m[2]);
     notes.push(`Leverage up to ${s.sizing.leverage}×`);
@@ -472,14 +594,23 @@ const VOCAB = (
   'stays trades period ema sma asset stock coin pair market bitcoin ethereum crypto risk position size half rest breakeven times row'
 ).split(' ');
 const PLAIN = new Set(
-  ('the a an of to in on at it its my is it\'s be by for with as from that this than then also both all any each every just only ' +
+  (
+    "the a an of to in on at it its my is it's be by for with as from that this than then also both all any each every just only " +
     'i we you he she they me us hey hi hello yo okay thanks bitcoin btc eth stock stocks shares coin want would like should will can could please lets let get got goes go going went make makes made ' +
     'do does did not no yes more less most least much many few new old first last next same other some once whenever after before ' +
-    'up down out into onto off again still while until till about around near far back time times row way').split(' '),
+    'up down out into onto off again still while until till about around near far back time times row way'
+  ).split(' '),
 );
 // Every word the reader itself uses (in its patterns and tables) counts as correct, so "fast", "slow", "dip",
 // "flips" or "slopes" are never "corrected" into something else.
-const KNOWN = new Set([...VOCAB, ...PLAIN, ...WORDS.split(' '), ...(SOURCE.replace(/\/\/.*$/gm, '').toLowerCase().match(/[a-z]{3,}/g) ?? [])]);
+const KNOWN = new Set([
+  ...VOCAB,
+  ...PLAIN,
+  ...WORDS.split(' '),
+  ...(SOURCE.replace(/\/\/.*$/gm, '')
+    .toLowerCase()
+    .match(/[a-z]{3,}/g) ?? []),
+]);
 const VOCAB_SET = new Set(VOCAB);
 const CANDIDATES = [...new Set([...VOCAB, ...PLAIN])].filter((w) => w.length >= 3);
 function fixTypos(text: string): string {
@@ -519,29 +650,50 @@ function phrasebook(text: string): string {
   const R: [RegExp, string][] = [
     // greetings, requests and manners: "hey can you make me a strategy that buys when ..."
     [/^\s*(?:hey|hi|hello|yo|ok|okay|so|um|uh)\b[\s,!]*/g, ' '],
-    [/^\s*(?:(?:can|could|would|will) you |please |pls |plz )*(?:make|build|create|write|give|set up|setup|code|design)(?: me| us)? (?:a |an |the )?(?:simple |basic |quick )?(?:strategy|strat|bot|system|algo|setup|rule|backtest)?\s*(?:that |which |to |where |so it |for )?/g, ' '],
+    [
+      /^\s*(?:(?:can|could|would|will) you |please |pls |plz )*(?:make|build|create|write|give|set up|setup|code|design)(?: me| us)? (?:a |an |the )?(?:simple |basic |quick )?(?:strategy|strat|bot|system|algo|setup|rule|backtest)?\s*(?:that |which |to |where |so it |for )?/g,
+      ' ',
+    ],
     [/\s*\b(?:please|pls|plz|thanks|thank you|thx)\b[.!]?/g, ''],
     [/\b(buy|sell|short)s\b/g, '$1'],
     [/\bbuy low,? (?:and )?sell high\b/g, 'buy when rsi is below 30, sell when rsi is above 70'],
     // exits said as a move against or for the trade: "close trade if candle flips to 1.5 times the atr"
     [/\b(\d+(?:\.\d+)?) ?(?:times|x) (?:the )?(?:atrs?|average true range)\b/g, '$1 atr'],
-    [/\b(?:close|exit|sell|get out|stop out|close out|cut|bail)(?: of)?(?: the| my| this)?(?: trade| position| it)? (?:if|when|once|as soon as) (?:the )?(?:candle|price|it|trade|position|market) (?:flips|moves|goes|drops|falls|turns|runs|swings|loses|is down|goes down|moves down)(?: back)?(?: against (?:me|you|it|us|the trade))?(?: (?:to|by))? (\d+(?:\.\d+)?) ?(atr|%)(?: against (?:me|you|it|us|the trade))?/g, 'stop loss $1 $2'],
-    [/\b(?:close|exit|sell|get out|close out|cash out|take profit)(?: of)?(?: the| my| this)?(?: trade| position| it)? (?:if|when|once|as soon as) (?:the )?(?:candle|price|it|trade|position|market) (?:gains|rises|goes up|is up|climbs|moves up|runs|moves|goes|makes)(?: in my favou?r)?(?: (?:to|by))? (\d+(?:\.\d+)?) ?(atr|%)(?: in my favou?r)?/g, 'take profit $1 $2'],
+    [
+      /\b(?:close|exit|sell|get out|stop out|close out|cut|bail)(?: of)?(?: the| my| this)?(?: trade| position| it)? (?:if|when|once|as soon as) (?:the )?(?:candle|price|it|trade|position|market) (?:flips|moves|goes|drops|falls|turns|runs|swings|loses|is down|goes down|moves down)(?: back)?(?: against (?:me|you|it|us|the trade))?(?: (?:to|by))? (\d+(?:\.\d+)?) ?(atr|%)(?: against (?:me|you|it|us|the trade))?/g,
+      'stop loss $1 $2',
+    ],
+    [
+      /\b(?:close|exit|sell|get out|close out|cash out|take profit)(?: of)?(?: the| my| this)?(?: trade| position| it)? (?:if|when|once|as soon as) (?:the )?(?:candle|price|it|trade|position|market) (?:gains|rises|goes up|is up|climbs|moves up|runs|moves|goes|makes)(?: in my favou?r)?(?: (?:to|by))? (\d+(?:\.\d+)?) ?(atr|%)(?: in my favou?r)?/g,
+      'take profit $1 $2',
+    ],
     [/\bstop(?: loss)? (?:at|of|is|=) (?=\d)/g, 'stop loss '],
     [/\b(?:take profit|target|tp) (?:at|of|is|=) (?=\d)/g, 'take profit '],
     // filler and word numbers
     [/^\s*(?:i want to|i'd like to|i would like to|i wanna|i'll|i will|please|let's|lets|we|you should|should)\s+/g, ' '],
-    [/\bzero\b/g, '0'], [/\bten\b/g, '10'], [/\btwenty\b/g, '20'], [/\bthirty\b/g, '30'], [/\bfifty\b/g, '50'], [/\bseventy\b/g, '70'], [/\beighty\b/g, '80'],
+    [/\bzero\b/g, '0'],
+    [/\bten\b/g, '10'],
+    [/\btwenty\b/g, '20'],
+    [/\bthirty\b/g, '30'],
+    [/\bfifty\b/g, '50'],
+    [/\bseventy\b/g, '70'],
+    [/\beighty\b/g, '80'],
     [/\b(\d+) ?(sma|ema|wma|hma|ma)\b/g, '$1 $2'],
     [/\b(\d+) (?:ma|moving average)\b/g, '$1 sma'],
     // the order a trader says it in
     [/(^|, )\s*when (.+?),? (buy|sell|short|go long|go short)\s*(?=,|$)/g, '$1$3 when $2'],
     [/\b(?:enter|open|take|start|go)(?: into)? (?:a |an )?(long|short)(?: position| trade)?(?= when| if)/g, '$1'],
     [/\b(?:sell|close|exit|get out of|dump)(?: of)? (?:my|the|our|this) (?:position|trade|long|bag|shares?|coins?)(?= when| if)/g, 'sell'],
-    [/\b(long|buy) above (the [^,]+?|[a-z]+ \d+), (short|sell) below (?:it|that)\b/g, 'buy when price is above $2, short when price is below $2'],
+    [
+      /\b(long|buy) above (the [^,]+?|[a-z]+ \d+), (short|sell) below (?:it|that)\b/g,
+      'buy when price is above $2, short when price is below $2',
+    ],
     [/(^|, )\s*(long|buy|short|sell) (above|below|over|under) /g, '$1$2 when price is $3 '],
     // "above it" means the average named earlier in the same sentence
-    [/\b((?:sma|ema|wma|hma|ma) \d+|\d+ (?:sma|ema|wma|hma|ma|day sma|day ema)|vwap)\b([^,]*?) (above|below|over|under) (?:it|that)\b/g, '$1$2 $3 $1'],
+    [
+      /\b((?:sma|ema|wma|hma|ma) \d+|\d+ (?:sma|ema|wma|hma|ma|day sma|day ema)|vwap)\b([^,]*?) (above|below|over|under) (?:it|that)\b/g,
+      '$1$2 $3 $1',
+    ],
     // "rsi is over 50 and rising"
     [/\b((?:the )?[a-z%]+(?: \d+)?) is (above|below|over|under) (\d+(?:\.\d+)?) and (rising|falling)\b/g, '$1 is $2 $3 and $1 is $4'],
     // volume multiples
@@ -549,18 +701,33 @@ function phrasebook(text: string): string {
     [/\bvolume is (\d+(?:\.\d+)?)x? (?:times )?(?:the )?(?:average|avg|normal)(?: volume)?\b/g, 'relative volume is above $1'],
     [/\bbreaks? (?:out )?(?:above |over )?(?=the |\d)/g, 'crosses above '],
     // sentence starts
-    [/\b(buy|go long|long|enter long|sell|short|go short|exit|cover)( the dip)? (?:after(?! \d)|as soon as|once|whenever|every time)\b/g, '$1 when'],
+    [
+      /\b(buy|go long|long|enter long|sell|short|go short|exit|cover)( the dip)? (?:after(?! \d)|as soon as|once|whenever|every time)\b/g,
+      '$1 when',
+    ],
     [/\bbuy the dip\b/g, 'buy'],
     // what is being bought doesn't change the rule: "buy bitcoin when", "sell my shares if"
-    [/\b(buy|sell|short)\s+(?!when\b|if\b|on\b|at\b|after\b|once\b|as\b|whenever\b|low\b|high\b|and\b|above\b|below\b|over\b|under\b)(?:the |some |my |more |all )?[a-z0-9]+\s+(?=when |if |once |whenever )/g, '$1 '],
+    [
+      /\b(buy|sell|short)\s+(?!when\b|if\b|on\b|at\b|after\b|once\b|as\b|whenever\b|low\b|high\b|and\b|above\b|below\b|over\b|under\b)(?:the |some |my |more |all )?[a-z0-9]+\s+(?=when |if |once |whenever )/g,
+      '$1 ',
+    ],
     // "rsi ... sell when it goes over 70": "it" is the oscillator named earlier
-    [/\b(rsi|stoch|stochastic|cci|mfi|williams %r|adx)\b(.*?\bwhen )(?:it|its|it's|it is)\b(?=\s+(?:is |goes |gets |crosses |moves |rises |drops |falls |climbs )?(?:back )?(?:above|over|under|below) \d)/g, '$1$2$1'],
+    [
+      /\b(rsi|stoch|stochastic|cci|mfi|williams %r|adx)\b(.*?\bwhen )(?:it|its|it's|it is)\b(?=\s+(?:is |goes |gets |crosses |moves |rises |drops |falls |climbs )?(?:back )?(?:above|over|under|below) \d)/g,
+      '$1$2$1',
+    ],
     // "above the 20 sma, sell when its below": below the same average
-    [/\b((?:sma|ema|wma|hma|ma) \d+|\d+ (?:sma|ema|wma|hma|ma|day sma|day ema)|vwap)\b(.*?\bwhen )(?:it'?s|it is|price is|price's) (above|below|over|under)(?=\s*(?:,|$))/g, '$1$2price is $3 $1'],
+    [
+      /\b((?:sma|ema|wma|hma|ma) \d+|\d+ (?:sma|ema|wma|hma|ma|day sma|day ema)|vwap)\b(.*?\bwhen )(?:it'?s|it is|price is|price's) (above|below|over|under)(?=\s*(?:,|$))/g,
+      '$1$2price is $3 $1',
+    ],
     [/\brsi (?:is |gets |goes )?(?:low|really low|very low)\b/g, 'rsi is below 30'],
     [/\brsi (?:is |gets |goes )?(?:high|really high|very high)\b/g, 'rsi is above 70'],
     [/\bbreaks? out (?:of|from|past|through) /g, 'crosses above '],
-    [/\b(buy|go long|long|enter long|short|go short) after (?=\d+ (?:red|green|up|down|white|black|rising|falling|higher|lower) )/g, '$1 when '],
+    [
+      /\b(buy|go long|long|enter long|short|go short) after (?=\d+ (?:red|green|up|down|white|black|rising|falling|higher|lower) )/g,
+      '$1 when ',
+    ],
     [/\b(?:price |it |the price )?gaps? up\b/g, 'open is above the 1 bar high'],
     [/\b(?:price |it |the price )?gaps? down\b/g, 'open is below the 1 bar low'],
     [/\band (?=(?:sell|short|go short|exit|close|cover|take profit)\b)/g, ', '],
@@ -569,14 +736,22 @@ function phrasebook(text: string): string {
     [/\b(?:it'?s|it is|its) oversold\b/g, 'rsi is below 30'],
     [/\brsi (?:is |gets |goes |becomes )?oversold\b/g, 'rsi is below 30'],
     [/\brsi (?:is |gets |goes |becomes )?overbought\b/g, 'rsi is above 70'],
-    [/ (?:in|during) an? (?:up ?trend|bull(?:ish)? (?:trend|market))\b/g, ' and close is above sma 200'], [/\b(?:the )?trend is (?:up|bullish)\b|\buptrend\b/g, 'close is above sma 200'],
-    [/ (?:in|during) an? (?:down ?trend|bear(?:ish)? (?:trend|market))\b/g, ' and close is below sma 200'], [/\b(?:the )?trend is (?:down|bearish)\b|\bdowntrend\b/g, 'close is below sma 200'],
+    [/ (?:in|during) an? (?:up ?trend|bull(?:ish)? (?:trend|market))\b/g, ' and close is above sma 200'],
+    [/\b(?:the )?trend is (?:up|bullish)\b|\buptrend\b/g, 'close is above sma 200'],
+    [/ (?:in|during) an? (?:down ?trend|bear(?:ish)? (?:trend|market))\b/g, ' and close is below sma 200'],
+    [/\b(?:the )?trend is (?:down|bearish)\b|\bdowntrend\b/g, 'close is below sma 200'],
     [/\bmomentum is (?:strong|high)\b|\bstrong trend\b/g, 'adx 14 is above 25'],
     [/\bmomentum is (?:weak|low)\b/g, 'adx 14 is below 20'],
     [/\bmomentum (?:is|turns|goes) (?:positive|up|bullish)\b/g, 'roc 10 crosses above 0'],
     [/\bmomentum (?:is|turns|goes) (?:negative|down|bearish)\b/g, 'roc 10 crosses below 0'],
-    [/\bmacd (?:turns|goes|flips|is|becomes) (?:positive|bullish|green)\b|\bmacd histogram (?:turns|flips|goes) (?:positive|green)\b/g, 'macd histogram crosses above 0'],
-    [/\bmacd (?:turns|goes|flips|is|becomes) (?:negative|bearish|red)\b|\bmacd histogram (?:turns|flips|goes) (?:negative|red)\b/g, 'macd histogram crosses below 0'],
+    [
+      /\bmacd (?:turns|goes|flips|is|becomes) (?:positive|bullish|green)\b|\bmacd histogram (?:turns|flips|goes) (?:positive|green)\b/g,
+      'macd histogram crosses above 0',
+    ],
+    [
+      /\bmacd (?:turns|goes|flips|is|becomes) (?:negative|bearish|red)\b|\bmacd histogram (?:turns|flips|goes) (?:negative|red)\b/g,
+      'macd histogram crosses below 0',
+    ],
     // moves
     [/\b(?:slopes|is sloping|points|is pointing|angles|turns|curls) (?:up|upward|higher)\b/g, 'is rising'],
     [/\b(?:slopes|is sloping|points|is pointing|angles|turns|curls) (?:down|downward|lower)\b/g, 'is falling'],
@@ -594,12 +769,19 @@ function phrasebook(text: string): string {
     // "x crosses y" with no direction means crossing above
     [/\bcross(?:es|ed) (?!above|below|over|under|up|down|back)/g, 'crosses above '],
     // "A crosses B ... when it crosses back": the same two lines the other way
-    [/\b((?:the )?(?:\d+ [a-z]+|[a-z]+ \d+)) crosses (above|below) ((?:the )?(?:\d+ [a-z]+|[a-z]+ \d+))(.*?\bwhen )(?:it|they) cross(?:es)? back(?: (?:above|below|over|under|up|down))?\b/g, (_m: string, a: string, d: string, b: string, mid: string) => `${a} crosses ${d} ${b}${mid}${a} crosses ${d === 'above' ? 'below' : 'above'} ${b}`] as unknown as [RegExp, string],
+    [
+      /\b((?:the )?(?:\d+ [a-z]+|[a-z]+ \d+)) crosses (above|below) ((?:the )?(?:\d+ [a-z]+|[a-z]+ \d+))(.*?\bwhen )(?:it|they) cross(?:es)? back(?: (?:above|below|over|under|up|down))?\b/g,
+      (_m: string, a: string, d: string, b: string, mid: string) =>
+        `${a} crosses ${d} ${b}${mid}${a} crosses ${d === 'above' ? 'below' : 'above'} ${b}`,
+    ] as unknown as [RegExp, string],
     // fast and slow averages, bare "the 50" next to "the 200"
     [/\bfast (ema|sma|ma|moving average)\b/g, '$1 9'],
     [/\bslow (ema|sma|ma|moving average)\b/g, '$1 21'],
     [/\bthe (\d{1,3})(?: day| period| bar)?(?= crosses| is above| is below| and| ,|$| crosses)/g, 'sma $1'],
-    [/(crosses (?:above|below)|is (?:above|below)) the (\d{1,3})(?: day| period| bar)?(?=\s*(?:,|$|\s(?:and|or|then|sell|buy)))/g, '$1 sma $2'],
+    [
+      /(crosses (?:above|below)|is (?:above|below)) the (\d{1,3})(?: day| period| bar)?(?=\s*(?:,|$|\s(?:and|or|then|sell|buy)))/g,
+      '$1 sma $2',
+    ],
     // earlier bars
     [/\b(?:yesterday'?s|the previous|the prior|the last|previous|prior|last) (?:day'?s |candle'?s |bar'?s )?(high|low)\b/g, 'the 1 bar $1'],
     // risk
@@ -619,26 +801,119 @@ export function readPhrase(text: string): string | null {
 }
 
 /** The text the reader works on, after typos and everyday wording are fixed. */
-export const prepareEnglish = (input: string) => phrasebook(normalizeEnglish(input));
+export const prepareEnglish = (input: string, opts: ReadOptions = {}) =>
+  phrasebook(normalizeEnglish(byTrade(applyLearned(input.toLowerCase(), opts.learned), opts).text));
 
 export function readCondition(text: string): string | null {
   const r = parseEnglish(`Buy when ${text}.`);
   return r.unknown.length || !r.strategy.longEntry.items.length ? null : describeGroup(r.strategy.longEntry);
 }
 
-export function parseEnglish(input: string, base?: Strategy): ParseResult {
+// Reads a strategy one sentence at a time, keeping track of which trade each sentence is about, so an exit said after
+// "buy when …" closes the buy and one said after "sell when …" closes that trade, never becoming another way in.
+function byTrade(text: string, opts: ReadOptions): { text: string; questions: Question[] } {
+  const questions: Question[] = [];
+  const sentences = text
+    .replace(/,?\s*(?:\band\s+)?(?<!\b(?:go|sell)\s)(?=\b(?:sell|buy|short|cover|go long|go short)\s+(?:when|if|once|as soon as)\b)/g, '. ')
+    .split(/(?<=[.!?;])\s+|\n+/)
+    .map((x) => x.trim())
+    .filter((x) => /[a-z]/.test(x));
+  const ENTRY_LONG = /^(?:buy|go long|long|enter (?:a )?long|get in|enter)\b/;
+  const ENTRY_SELL = /^(?:sell)\s+(?:when|if|on|once|as soon as)\b/;
+  const ENTRY_SHORT = /^(?:short|go short|sell short|short sell|enter (?:a )?short|open (?:a )?short)\b/;
+  // An exit said about THIS trade ("in the other direction", "the trade closes", "or when it closes below …"), not a general stop for every trade.
+  const CLOSES_TRADE =
+    /\b(?:the trade closes|close (?:the |this )?trade|the trade is closed|exits? the trade)\b|\bin the other direction\b|\bagainst (?:me|it|the trade)\b|\bthe other way\b|\bor (?:when|if|once) it closes\b/;
+  const hasBuy = sentences.some((x) => ENTRY_LONG.test(x));
+  // "sell when …" followed by its own exit is a second trade (a short), not the way out of the buy.
+  const sellOwnsExit = sentences.some(
+    (x, i) =>
+      ENTRY_SELL.test(x) &&
+      (CLOSES_TRADE.test(x.replace(ENTRY_SELL, '')) ||
+        (sentences[i + 1] &&
+          !ENTRY_LONG.test(sentences[i + 1]) &&
+          !ENTRY_SELL.test(sentences[i + 1]) &&
+          CLOSES_TRADE.test(sentences[i + 1]))),
+  );
+  const buyHasExit = sentences.some(
+    (x, i) => ENTRY_LONG.test(x) && sentences[i + 1] && CLOSES_TRADE.test(sentences[i + 1]) && !ENTRY_SELL.test(sentences[i + 1]),
+  );
+  let sell = opts.sell;
+  if (!sell && hasBuy && sentences.some((x) => ENTRY_SELL.test(x))) {
+    if (sellOwnsExit || buyHasExit) sell = 'short';
+    else
+      questions.push({
+        id: 'sell',
+        text: 'When you say “sell”, do you mean close the buy, or open a short trade?',
+        options: [
+          { label: 'Close the buy', value: 'exit' },
+          { label: 'Open a short', value: 'short' },
+        ],
+      });
+  }
+  let trade: 'long' | 'short' | null = null;
+  const out = sentences.map((raw) => {
+    let x = raw.replace(/[.!?;]+$/, '');
+    // "sma closes above the 25 sma", "candle closes", "it closes": the price closing, not an average nobody named
+    x = x.replace(
+      /\b(?:the )?(?:sma|ema|ma|candle|bar|price|it|asset|stock|chart)\s+(?:closes|closed|close)\s+(above|below|over|under)\b/g,
+      'close crosses $1',
+    );
+    if (ENTRY_LONG.test(x)) trade = 'long';
+    else if (ENTRY_SHORT.test(x)) trade = 'short';
+    else if (ENTRY_SELL.test(x)) {
+      if (sell === 'short') {
+        x = x.replace(/^sell\b/, 'short');
+        trade = 'short';
+      }
+    }
+    if (!trade) return x;
+    const out = trade === 'long' ? 'sell' : 'cover';
+    // the stop: "if it crosses 1.5 times the atr in the other direction (the trade closes)"
+    x = x.replace(
+      /\b(?:(?:exit|close(?: the trade)?|stop out|get out|sell|cover)\s+)?(?:if|when|once)\s+(?:it|price|the price|the candle|candle)\s+(?:crosses|moves|goes|runs|swings|flips|drops|falls|rises)\s+(\d+(?:\.\d+)?)\s*(?:times|x)?\s*(?:the\s+)?(atr|%|percent)\s+(?:in the other direction|the other way|against (?:me|it|the trade)|the wrong way)(?:,?\s*(?:then\s+)?the trade (?:closes|is closed|exits))?/g,
+      (_m, n: string, u: string) => `, stop loss ${n} ${u === 'atr' ? 'atr' : '%'}, `,
+    );
+    // "… or when it closes below the 25 sma": a second way out of this trade
+    x = x.replace(
+      /\b(?:the trade closes\s+)?(?:,\s*)?or\s+(?:when|if|once)\s+(?:it\s+|price\s+|the price\s+)?close crosses\s+/g,
+      `, ${out} when close crosses `,
+    );
+    x = x.replace(/\b(?:or\s+)?(?:when|if|once)\s+it\s+closes\s+(above|below|over|under)\s+/g, `${out} when close crosses $1 `);
+    x = x.replace(/\bthe trade closes\b/g, '');
+    return x;
+  });
+  return { text: out.join('. '), questions };
+}
+
+/** Puts the trader's own corrections in before reading: their words, swapped for what they told the box they mean. */
+function applyLearned(text: string, learned: [string, string][] = []) {
+  let t = text;
+  for (const [from, to] of learned) if (from.trim()) t = t.split(from.toLowerCase()).join(to.toLowerCase());
+  return t;
+}
+
+export function parseEnglish(input: string, base?: Strategy, opts: ReadOptions = {}): ParseResult {
   const s = base ? structuredClone(base) : blankStrategy('From English');
   s.longEntry = group();
   s.longExit = group();
   s.shortEntry = group();
   s.shortExit = group();
   s.filter = group();
-  s.exits = { ...s.exits, stop: { ...s.exits.stop, on: false }, trail: { ...s.exits.trail, on: false }, targets: { ...s.exits.targets, on: false }, time: { ...s.exits.time, on: false }, breakeven: { ...s.exits.breakeven, on: false } };
+  s.exits = {
+    ...s.exits,
+    stop: { ...s.exits.stop, on: false },
+    trail: { ...s.exits.trail, on: false },
+    targets: { ...s.exits.targets, on: false },
+    time: { ...s.exits.time, on: false },
+    breakeven: { ...s.exits.breakeven, on: false },
+  };
   s.sizing.scaleIn.on = false;
   const understood: string[] = [];
   const unknown: string[] = [];
 
-  let text = phrasebook(normalizeEnglish(input));
+  const shaped = byTrade(applyLearned(input.toLowerCase(), opts.learned), opts);
+  let text = phrasebook(normalizeEnglish(shaped.text));
   text = extractRisk(text, s, understood);
 
   // Find section starts, then give each section the text up to the next one.
@@ -678,9 +953,16 @@ export function parseEnglish(input: string, base?: Strategy): ParseResult {
   const hasLong = s.longEntry.items.length > 0;
   const hasShort = s.shortEntry.items.length > 0;
   if (!understood.some((n) => /only|both|long and short/i.test(n))) s.side = hasLong && hasShort ? 'both' : hasShort ? 'short' : 'long';
-  const heads = (['longEntry', 'longExit', 'shortEntry', 'shortExit', 'filter'] as const).filter((sec) => s[sec].items.length).map((sec) => `${SECTION_LABEL[sec]}: ${describeGroup(s[sec])}`);
+  const heads = (['longEntry', 'longExit', 'shortEntry', 'shortExit', 'filter'] as const)
+    .filter((sec) => s[sec].items.length)
+    .map((sec) => `${SECTION_LABEL[sec]}: ${describeGroup(s[sec])}`);
   understood.unshift(...heads);
-  return { strategy: s, understood, unknown: unknown.filter((u) => u && !/^(?:and|or|then|also)$/.test(u)) };
+  return {
+    strategy: s,
+    understood: [...new Set(understood)],
+    unknown: unknown.filter((u) => u && !/^(?:and|or|then|also)$/.test(u)),
+    questions: shaped.questions,
+  };
 }
 
 const SECTION_LABEL: Record<Section, string> = {
@@ -700,7 +982,8 @@ export function describeRule(r: Rule): string {
   if (cmp.unary) return `${a} ${cmp.word}${r.bars && r.bars > 1 ? ` over ${r.bars} bars` : ''}`;
   const within = r.within && r.within > 1 ? ` within the last ${r.within} bars` : '';
   if (r.a.id === 'pattern' && r.b.kind === 'num' && (r.cmp === 'gte' || r.cmp === 'gt')) {
-    if (r.a.out === 'upStreak' || r.a.out === 'downStreak') return `${formatNum(r.b.v)} ${r.a.out === 'upStreak' ? 'up' : 'down'} closes in a row`;
+    if (r.a.out === 'upStreak' || r.a.out === 'downStreak')
+      return `${formatNum(r.b.v)} ${r.a.out === 'upStreak' ? 'up' : 'down'} closes in a row`;
     return `a ${a.toLowerCase()}${within}`;
   }
   return `${a} ${cmp.word} ${operandLabel(r.b)}${within}`;
@@ -724,10 +1007,16 @@ export function describe(s: Strategy): string {
   const u = (unit: string, v: number) => (unit === 'atr' ? `${formatNum(v)} ATR` : unit === 'r' ? `${formatNum(v)}R` : `${formatNum(v)}%`);
   const risk: string[] = [];
   if (e.stop.on) risk.push(`stop loss ${u(e.stop.unit, e.stop.value)}`);
-  if (e.trail.on) risk.push(`trailing stop ${u(e.trail.unit, e.trail.value)}${e.trail.activate > 0 ? ` once up ${formatNum(e.trail.activate)}%` : ''}`);
+  if (e.trail.on)
+    risk.push(`trailing stop ${u(e.trail.unit, e.trail.value)}${e.trail.activate > 0 ? ` once up ${formatNum(e.trail.activate)}%` : ''}`);
   if (e.targets.on) {
     if (e.targets.levels.length === 1) risk.push(`take profit ${u(e.targets.levels[0].unit, e.targets.levels[0].value)}`);
-    else risk.push(e.targets.levels.map((l, i) => `${i === e.targets.levels.length - 1 ? 'the rest' : `${formatNum(l.size)}%`} at ${u(l.unit, l.value)}`).join(', '));
+    else
+      risk.push(
+        e.targets.levels
+          .map((l, i) => `${i === e.targets.levels.length - 1 ? 'the rest' : `${formatNum(l.size)}%`} at ${u(l.unit, l.value)}`)
+          .join(', '),
+      );
   }
   if (e.breakeven.on) risk.push(`breakeven after ${u(e.breakeven.unit, e.breakeven.value)}`);
   if (e.time.on) risk.push(`exit after ${e.time.bars} bars`);

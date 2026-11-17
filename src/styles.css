@@ -1830,3 +1830,25 @@ textarea.input {
   gap: 8px;
   justify-content: flex-end;
 }
+
+/* Read-back, questions and corrections in the plain-English box */
+.read .inp {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: var(--card, #fff);
+  color: var(--ink);
+}
+.read .inp:focus {
+  outline: none;
+  border-color: var(--gold, #c9a227);
+}
+.read li .btn.sm {
+  padding: 3px 9px;
+  font-size: 12px;
+}
+.read li {
+  align-items: center;
+}

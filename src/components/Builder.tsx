@@ -1,9 +1,26 @@
-import { AlertTriangle, BookOpen, Brain, Check, Clock, Code2, CopyPlus, FilePlus2, HelpCircle, Plus, Redo2, Save, Sparkles, Trash2, Undo2, Wand2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  BookOpen,
+  Brain,
+  Check,
+  Clock,
+  Code2,
+  CopyPlus,
+  FilePlus2,
+  HelpCircle,
+  Plus,
+  Redo2,
+  Save,
+  Sparkles,
+  Trash2,
+  Undo2,
+  Wand2,
+} from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 
 import { INDICATORS, SOURCES, indicator, type Group as IndGroup, type Source } from '../lib/catalog';
 import { describe as describeStrategy, parseEnglish, type ParseResult } from '../lib/english';
-import { understand } from '../lib/understand';
+import { addTo, fixPart, forget, learn, learned, teaching, understand } from '../lib/understand';
 import { useAi } from './useAi';
 import { ENGLISH_EXAMPLES, PRESETS } from '../lib/presets';
 import {
@@ -54,7 +71,12 @@ export function Builder({ strategy: s, onChange, onCode, canUndo, canRedo, onUnd
     <>
       <div className="rail-head">
         <div className="name-row">
-          <input className="name-input" value={s.name} aria-label="Strategy name" onChange={(e) => edit((d) => (d.name = e.target.value))} />
+          <input
+            className="name-input"
+            value={s.name}
+            aria-label="Strategy name"
+            onChange={(e) => edit((d) => (d.name = e.target.value))}
+          />
           <button className="icon-btn" title="Undo" aria-label="Undo" disabled={!canUndo} onClick={onUndo}>
             <Undo2 />
           </button>
@@ -88,7 +110,12 @@ export function Builder({ strategy: s, onChange, onCode, canUndo, canRedo, onUnd
             >
               <Save />
             </button>
-            <button className="icon-btn" title="Start from scratch" aria-label="Start from scratch" onClick={() => onChange(blankStrategy())}>
+            <button
+              className="icon-btn"
+              title="Start from scratch"
+              aria-label="Start from scratch"
+              onClick={() => onChange(blankStrategy())}
+            >
               <FilePlus2 />
             </button>
             <button className="icon-btn" title="Pine Script and sharing" aria-label="Pine Script and sharing" onClick={onCode}>
@@ -139,44 +166,111 @@ export function Builder({ strategy: s, onChange, onCode, canUndo, canRedo, onUnd
 
 function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: Strategy) => void }) {
   const [text, setText] = useState('');
+  const [source, setSource] = useState('');
   const [result, setResult] = useState<ParseResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sell, setSell] = useState<'exit' | 'short' | undefined>(undefined);
+  const [taught, setTaught] = useState<[string, string][]>(() => learned());
+  const [fixing, setFixing] = useState<number | null>(null);
+  const [fixText, setFixText] = useState('');
+  const [reply, setReply] = useState('');
+  const [note, setNote] = useState('');
   const ai = useAi();
   const run = useRef(0);
 
+  const named = (s: Strategy) => {
+    const generic =
+      strategy.name === 'New strategy' ||
+      strategy.name === 'From English' ||
+      PRESETS.some((p) => p.name === strategy.name || p.strategy.name === strategy.name);
+    s.name = generic ? 'My strategy' : strategy.name;
+    return s;
+  };
   const apply = (r: ParseResult) => {
     setResult(r);
-    if (r.strategy.longEntry.items.length || r.strategy.shortEntry.items.length) {
-      const generic = strategy.name === 'New strategy' || strategy.name === 'From English' || PRESETS.some((p) => p.name === strategy.name || p.strategy.name === strategy.name);
-      r.strategy.name = generic ? 'My strategy' : strategy.name;
-      onApply(r.strategy);
-    }
+    if (r.strategy.longEntry.items.length || r.strategy.shortEntry.items.length) onApply(named(r.strategy));
   };
 
-  // One reader: the quick rules read what they can, and the built-in AI reads the rest in the same step.
-  const build = async (value = text) => {
+  // One reader: the quick rules read what they can, the built-in AI reads the rest, and anything that could mean two
+  // different strategies is asked about instead of guessed.
+  const build = async (value = text, opts: { sell?: 'exit' | 'short'; learned?: [string, string][] } = {}) => {
     if (!value.trim()) return;
     const id = ++run.current;
-    const first = parseEnglish(value, strategy);
+    const o = { sell: opts.sell ?? sell, learned: opts.learned ?? taught };
+    setSource(value);
+    setFixing(null);
+    setNote('');
+    const first = parseEnglish(value, strategy, o);
     if (!first.unknown.length) {
       apply(first);
       return;
     }
     setBusy(true);
     ai.start();
-    const r = await understand(value, strategy, ai.rewrite);
+    const r = await understand(value, strategy, ai.rewrite, o);
     if (id !== run.current) return;
     setBusy(false);
     apply(r);
   };
+
+  const lines = result
+    ? describeStrategy(strategy)
+        .split(/(?<=\.)\s+/)
+        .filter((l) => l && !/^Long and short\.?$/.test(l))
+    : [];
   const unknown = result?.unknown ?? [];
+  const questions = (result?.questions ?? []).filter((q) => !(q.id === 'sell' && sell));
+
+  const fix = (i: number) => {
+    if (!fixText.trim()) return;
+    const { strategy: next, read } = fixPart(strategy, lines[i], fixText, { sell, learned: taught });
+    onApply(named(next));
+    setFixing(null);
+    setFixText('');
+    setNote(read.unknown.length ? `Still didn’t catch “${read.unknown[0]}”. Try other words, or tap Fix again.` : 'Fixed.');
+  };
+  const send = () => {
+    const said = reply.trim();
+    if (!said) return;
+    setReply('');
+    const t = teaching(said);
+    if (t && /^(?:sell|selling|sells)$/.test(t.from)) {
+      const v = /short/.test(t.to) ? 'short' : 'exit';
+      setSell(v);
+      void build(source, { sell: v });
+      setNote(v === 'short' ? 'Got it: “sell” opens a short. Rebuilt.' : 'Got it: “sell” closes the buy. Rebuilt.');
+      return;
+    }
+    if (t) {
+      const list = learn(t.from, t.to);
+      setTaught(list);
+      void build(source, { learned: list });
+      setNote(`Got it: “${t.from}” means “${t.to}”. I’ll remember that.`);
+      return;
+    }
+    if (/^(?:no|nope|wrong|that'?s wrong|not right|incorrect)[.!]*$/i.test(said)) {
+      setNote('Tap Fix next to the rule that’s wrong and say it the right way, or tell me what a word means, like “sell means go short”.');
+      return;
+    }
+    const { strategy: next, read } = addTo(strategy, said, { sell, learned: taught });
+    if (!read.understood.length) {
+      setNote(`I didn’t catch “${said}”. Try saying the rule again, or tell me what a word means, like “sell means go short”.`);
+      return;
+    }
+    onApply(named(next));
+    setNote(`Updated: ${read.understood.join('; ')}.`);
+  };
 
   return (
     <div className="sec">
       <div className="sec-head">
         <h3>Describe it in plain English</h3>
         <div className="end">
-          <button className="btn ghost sm" title="Write the current rules as a sentence" onClick={() => setText(describeStrategy(strategy))}>
+          <button
+            className="btn ghost sm"
+            title="Write the current rules as a sentence"
+            onClick={() => setText(describeStrategy(strategy))}
+          >
             <Wand2 /> Current rules
           </button>
         </div>
@@ -196,7 +290,14 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
             <span className="muted" style={{ fontSize: 12 }}>
               {busy ? 'Reading it…' : 'Built-in AI · works offline'}
             </span>
-            <button className="btn gold sm" onClick={() => void build()} disabled={!text.trim() || busy}>
+            <button
+              className="btn gold sm"
+              onClick={() => {
+                setSell(undefined);
+                void build(text, { sell: undefined });
+              }}
+              disabled={!text.trim() || busy}
+            >
               {busy ? <Brain /> : <Sparkles />} {busy ? 'Reading…' : 'Build rules'}
             </button>
           </div>
@@ -204,20 +305,120 @@ function EnglishBox({ strategy, onApply }: { strategy: Strategy; onApply: (s: St
       </div>
       {result && !busy ? (
         <div className="read">
+          {questions.map((q) => (
+            <div key={q.id} className="ai-box col">
+              <b>
+                <HelpCircle /> {q.text}
+              </b>
+              <div className="bar" style={{ justifyContent: 'flex-start', gap: 8 }}>
+                {q.options.map((o) => (
+                  <button
+                    key={o.value}
+                    className="btn gold sm"
+                    onClick={() => {
+                      const v = o.value as 'exit' | 'short';
+                      setSell(v);
+                      void build(source, { sell: v });
+                    }}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              <span className="muted" style={{ fontSize: 12 }}>
+                Until you choose, it’s set up as “close the buy”.
+              </span>
+            </div>
+          ))}
+          <div className="muted" style={{ fontSize: 12, margin: '4px 0 6px' }}>
+            Here’s what I understood. Tap Fix on anything that’s wrong.
+          </div>
           <ul>
-            {result.understood.map((u) => (
-              <li key={u}>
+            {lines.map((l, i) => (
+              <li key={l + i} style={{ alignItems: 'flex-start' }}>
                 <Check className="up" />
-                {u}
+                <div style={{ flex: 1 }}>
+                  {l}
+                  {fixing === i ? (
+                    <form
+                      className="fix-row"
+                      style={{ display: 'flex', gap: 6, marginTop: 6 }}
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        fix(i);
+                      }}
+                    >
+                      <input
+                        className="inp"
+                        autoFocus
+                        style={{ flex: 1 }}
+                        placeholder="Say it the right way"
+                        value={fixText}
+                        onChange={(e) => setFixText(e.target.value)}
+                        aria-label="The right way to say this rule"
+                      />
+                      <button className="btn gold sm" disabled={!fixText.trim()}>
+                        Fix
+                      </button>
+                      <button type="button" className="btn ghost sm" onClick={() => setFixing(null)}>
+                        Cancel
+                      </button>
+                    </form>
+                  ) : null}
+                </div>
+                {fixing !== i ? (
+                  <button
+                    className="btn ghost sm"
+                    onClick={() => {
+                      setFixing(i);
+                      setFixText('');
+                    }}
+                  >
+                    Fix
+                  </button>
+                ) : null}
               </li>
             ))}
             {unknown.map((u) => (
               <li key={u} style={{ color: '#8f2236' }}>
                 <HelpCircle />
-                Didn’t catch “{u}”. Try saying it another way.
+                Didn’t catch “{u}”. Say it another way below.
               </li>
             ))}
           </ul>
+          <form
+            style={{ display: 'flex', gap: 6, marginTop: 8 }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              send();
+            }}
+          >
+            <input
+              className="inp"
+              style={{ flex: 1 }}
+              placeholder="Not right? Tell me, e.g. “sell means go short”"
+              value={reply}
+              onChange={(e) => setReply(e.target.value)}
+              aria-label="Tell it what’s wrong"
+            />
+            <button className="btn gold sm" disabled={!reply.trim()}>
+              Send
+            </button>
+          </form>
+          {note ? (
+            <p className="muted" style={{ fontSize: 13, margin: '8px 0 0' }}>
+              {note}
+            </p>
+          ) : null}
+          {taught.length ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+              {taught.map(([f, t]) => (
+                <button key={f} className="btn ghost sm" title="Forget this" onClick={() => setTaught(forget(f))}>
+                  “{f}” means “{t}” ×
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className="examples">
@@ -249,7 +450,21 @@ const DEFAULT_RULE: Record<SectionKey, () => Rule> = {
   filter: () => rule(ind('adx', [14], { out: 'adx' }), 'gt', num(20)),
 };
 
-function Section({ title, sub, k, s, edit, optional }: { title: string; sub: string; k: SectionKey; s: Strategy; edit: (fn: (d: Strategy) => void) => void; optional?: boolean }) {
+function Section({
+  title,
+  sub,
+  k,
+  s,
+  edit,
+  optional,
+}: {
+  title: string;
+  sub: string;
+  k: SectionKey;
+  s: Strategy;
+  edit: (fn: (d: Strategy) => void) => void;
+  optional?: boolean;
+}) {
   const g = s[k];
   return (
     <div className="sec">
@@ -271,7 +486,19 @@ function Section({ title, sub, k, s, edit, optional }: { title: string; sub: str
   );
 }
 
-function GroupEditor({ g, path, onChange, makeRule, nested }: { g: RuleGroup; path: number[]; onChange: (fn: (root: RuleGroup) => void) => void; makeRule: () => Rule; nested?: boolean }) {
+function GroupEditor({
+  g,
+  path,
+  onChange,
+  makeRule,
+  nested,
+}: {
+  g: RuleGroup;
+  path: number[];
+  onChange: (fn: (root: RuleGroup) => void) => void;
+  makeRule: () => Rule;
+  nested?: boolean;
+}) {
   const resolve = (root: RuleGroup) => path.reduce<RuleGroup>((acc, i) => acc.items[i] as RuleGroup, root);
   const word = g.mode === 'all' ? 'and' : 'or';
   return (
@@ -304,7 +531,12 @@ function GroupEditor({ g, path, onChange, makeRule, nested }: { g: RuleGroup; pa
               <div style={{ flex: 1, minWidth: 0 }}>
                 <GroupEditor g={it} path={[...path, i]} onChange={onChange} makeRule={makeRule} nested />
               </div>
-              <button className="icon-btn sm" aria-label="Remove group" title="Remove group" onClick={() => onChange((root) => resolve(root).items.splice(i, 1))}>
+              <button
+                className="icon-btn sm"
+                aria-label="Remove group"
+                title="Remove group"
+                onClick={() => onChange((root) => resolve(root).items.splice(i, 1))}
+              >
                 <Trash2 />
               </button>
             </div>
@@ -316,7 +548,11 @@ function GroupEditor({ g, path, onChange, makeRule, nested }: { g: RuleGroup; pa
           <Plus /> Rule
         </button>
         {!nested ? (
-          <button className="btn sm" title={`Add a group whose rules combine with “${g.mode === 'all' ? 'or' : 'and'}”`} onClick={() => onChange((root) => resolve(root).items.push(group(g.mode === 'all' ? 'any' : 'all', [makeRule(), makeRule()])))}>
+          <button
+            className="btn sm"
+            title={`Add a group whose rules combine with “${g.mode === 'all' ? 'or' : 'and'}”`}
+            onClick={() => onChange((root) => resolve(root).items.push(group(g.mode === 'all' ? 'any' : 'all', [makeRule(), makeRule()])))}
+          >
             <Plus /> {g.mode === 'all' ? '“Or” group' : '“And” group'}
           </button>
         ) : null}
@@ -325,7 +561,17 @@ function GroupEditor({ g, path, onChange, makeRule, nested }: { g: RuleGroup; pa
   );
 }
 
-function RuleRow({ r, onChange, onRemove, onDuplicate }: { r: Rule; onChange: (r: Rule) => void; onRemove: () => void; onDuplicate: () => void }) {
+function RuleRow({
+  r,
+  onChange,
+  onRemove,
+  onDuplicate,
+}: {
+  r: Rule;
+  onChange: (r: Rule) => void;
+  onRemove: () => void;
+  onDuplicate: () => void;
+}) {
   const [picking, setPicking] = useState<'a' | 'b' | null>(null);
   const cmp = CMPS.find((c) => c.id === r.cmp)!;
   return (
@@ -360,7 +606,12 @@ function RuleRow({ r, onChange, onRemove, onDuplicate }: { r: Rule; onChange: (r
       ) : null}
       <span className="end">
         {!cmp.unary ? (
-          <button className="icon-btn sm" title={r.within && r.within > 1 ? 'Only on this bar' : 'Allow it to have happened in the last few bars'} aria-label="Within bars" onClick={() => onChange({ ...r, within: r.within && r.within > 1 ? undefined : 3 })}>
+          <button
+            className="icon-btn sm"
+            title={r.within && r.within > 1 ? 'Only on this bar' : 'Allow it to have happened in the last few bars'}
+            aria-label="Within bars"
+            onClick={() => onChange({ ...r, within: r.within && r.within > 1 ? undefined : 3 })}
+          >
             <Clock />
           </button>
         ) : null}
@@ -381,7 +632,12 @@ function RuleRow({ r, onChange, onRemove, onDuplicate }: { r: Rule; onChange: (r
             if (picking === 'a' && o.kind === 'ind') {
               const def = indicator(o.id);
               // When the left side becomes an oscillator, offer its usual level on the right.
-              const b = def.hint !== undefined && r.b.kind === 'ind' && r.b.id === 'price' ? num(def.hint) : r.b.kind === 'num' && def.hint !== undefined && r.a.id !== o.id ? num(def.hint) : r.b;
+              const b =
+                def.hint !== undefined && r.b.kind === 'ind' && r.b.id === 'price'
+                  ? num(def.hint)
+                  : r.b.kind === 'num' && def.hint !== undefined && r.a.id !== o.id
+                    ? num(def.hint)
+                    : r.b;
               onChange({ ...r, a: o, b });
             } else onChange({ ...r, b: o });
             setPicking(null);
@@ -394,7 +650,19 @@ function RuleRow({ r, onChange, onRemove, onDuplicate }: { r: Rule; onChange: (r
 
 const GROUPS: (IndGroup | 'Number')[] = ['Price', 'Trend', 'Momentum', 'Volatility', 'Volume', 'Pattern', 'Time', 'Number'];
 
-function OperandPicker({ value, allowNumber, hintFor, onClose, onPick }: { value: Operand; allowNumber: boolean; hintFor?: IndOperand; onClose: () => void; onPick: (o: Operand) => void }) {
+function OperandPicker({
+  value,
+  allowNumber,
+  hintFor,
+  onClose,
+  onPick,
+}: {
+  value: Operand;
+  allowNumber: boolean;
+  hintFor?: IndOperand;
+  onClose: () => void;
+  onPick: (o: Operand) => void;
+}) {
   const [draft, setDraft] = useState<Operand>(structuredClone(value));
   const [tab, setTab] = useState<IndGroup | 'Number'>(value.kind === 'num' ? 'Number' : indicator(value.id).group);
   const [q, setQ] = useState('');
@@ -405,12 +673,24 @@ function OperandPicker({ value, allowNumber, hintFor, onClose, onPick }: { value
   const def = draft.kind === 'ind' ? indicator(draft.id) : null;
   const choose = (id: string) => {
     const d = indicator(id);
-    setDraft(draft.kind === 'ind' && draft.id === id ? draft : ind(id, d.params.map((p) => p.def)));
+    setDraft(
+      draft.kind === 'ind' && draft.id === id
+        ? draft
+        : ind(
+            id,
+            d.params.map((p) => p.def),
+          ),
+    );
   };
   return (
     <Modal title="Choose a value" onClose={onClose} wide>
       <div className="search">
-        <input placeholder="Search indicators: rsi, bollinger, supertrend…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search indicators" />
+        <input
+          placeholder="Search indicators: rsi, bollinger, supertrend…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          aria-label="Search indicators"
+        />
       </div>
       <div className="picker" style={{ flex: 1, minHeight: 0 }}>
         <nav aria-label="Indicator groups">
@@ -433,7 +713,13 @@ function OperandPicker({ value, allowNumber, hintFor, onClose, onPick }: { value
             <div style={{ padding: 10, display: 'grid', gap: 10 }}>
               <div className="field">
                 <label>Value</label>
-                <NumberInput label="Number" value={draft.kind === 'num' ? draft.v : 0} step={1} width={120} onChange={(v) => setDraft(num(v))} />
+                <NumberInput
+                  label="Number"
+                  value={draft.kind === 'num' ? draft.v : 0}
+                  step={1}
+                  width={120}
+                  onChange={(v) => setDraft(num(v))}
+                />
               </div>
               {hintFor && indicator(hintFor.id).levels?.length ? (
                 <div className="examples">
@@ -447,7 +733,11 @@ function OperandPicker({ value, allowNumber, hintFor, onClose, onPick }: { value
             </div>
           ) : (
             list.map((d) => (
-              <button key={d.id} onClick={() => choose(d.id)} style={draft.kind === 'ind' && draft.id === d.id ? { background: 'var(--gold-soft)' } : undefined}>
+              <button
+                key={d.id}
+                onClick={() => choose(d.id)}
+                style={draft.kind === 'ind' && draft.id === d.id ? { background: 'var(--gold-soft)' } : undefined}
+              >
                 <b>{d.name}</b>
                 <span>{d.outputs.length > 1 ? d.outputs.map((o) => o.label.replace(/\s*\(.*\)$/, '')).join(' · ') : d.short}</span>
               </button>
@@ -460,7 +750,11 @@ function OperandPicker({ value, allowNumber, hintFor, onClose, onPick }: { value
           {def.outputs.length > 1 ? (
             <div className="field">
               <label>{def.id === 'pattern' ? 'Pattern' : 'Line'}</label>
-              <select className="select" value={draft.out ?? def.outputs[0].key} onChange={(e) => setDraft({ ...draft, out: e.target.value })}>
+              <select
+                className="select"
+                value={draft.out ?? def.outputs[0].key}
+                onChange={(e) => setDraft({ ...draft, out: e.target.value })}
+              >
                 {def.outputs.map((o) => (
                   <option key={o.key} value={o.key}>
                     {o.label}
@@ -472,13 +766,24 @@ function OperandPicker({ value, allowNumber, hintFor, onClose, onPick }: { value
           {def.params.map((p, k) => (
             <div className="field" key={p.label}>
               <label>{p.label}</label>
-              <NumberInput label={p.label} value={draft.p[k]} min={p.min} max={p.max} step={p.step} onChange={(v) => setDraft({ ...draft, p: draft.p.map((x, j) => (j === k ? v : x)) })} />
+              <NumberInput
+                label={p.label}
+                value={draft.p[k]}
+                min={p.min}
+                max={p.max}
+                step={p.step}
+                onChange={(v) => setDraft({ ...draft, p: draft.p.map((x, j) => (j === k ? v : x)) })}
+              />
             </div>
           ))}
           {def.source ? (
             <div className="field">
               <label>Price</label>
-              <select className="select" value={draft.src ?? def.source} onChange={(e) => setDraft({ ...draft, src: e.target.value as Source })}>
+              <select
+                className="select"
+                value={draft.src ?? def.source}
+                onChange={(e) => setDraft({ ...draft, src: e.target.value as Source })}
+              >
                 {SOURCES.map((x) => (
                   <option key={x.id} value={x.id}>
                     {x.label}
@@ -490,7 +795,14 @@ function OperandPicker({ value, allowNumber, hintFor, onClose, onPick }: { value
           <div className="field">
             <label>Value from</label>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <NumberInput label="Bars ago" value={draft.ago ?? 0} min={0} max={500} width={60} onChange={(v) => setDraft({ ...draft, ago: v || undefined })} />
+              <NumberInput
+                label="Bars ago"
+                value={draft.ago ?? 0}
+                min={0}
+                max={500}
+                width={60}
+                onChange={(v) => setDraft({ ...draft, ago: v || undefined })}
+              />
               <span className="unit">bars ago</span>
             </span>
           </div>
@@ -528,7 +840,10 @@ const UNIT_OPTS = [
 
 function ExitsEditor({ s, edit }: { s: Strategy; edit: (fn: (d: Strategy) => void) => void }) {
   const e = s.exits;
-  const anyAtr = (e.stop.on && e.stop.unit === 'atr') || (e.trail.on && e.trail.unit === 'atr') || (e.targets.on && e.targets.levels.some((l) => l.unit === 'atr'));
+  const anyAtr =
+    (e.stop.on && e.stop.unit === 'atr') ||
+    (e.trail.on && e.trail.unit === 'atr') ||
+    (e.targets.on && e.targets.levels.some((l) => l.unit === 'atr'));
   return (
     <div className="sec">
       <div className="sec-head">
@@ -545,8 +860,20 @@ function ExitsEditor({ s, edit }: { s: Strategy; edit: (fn: (d: Strategy) => voi
           <div className="field">
             <span className="label">Distance</span>
             <span className="inline">
-              <NumberInput label="Stop distance" value={e.stop.value} min={0.05} max={95} step={e.stop.unit === 'atr' ? 0.25 : 0.5} onChange={(v) => edit((d) => (d.exits.stop.value = v))} />
-              <Seg label="Stop unit" value={e.stop.unit} options={UNIT_OPTS} onChange={(v: DistUnit) => edit((d) => (d.exits.stop.unit = v))} />
+              <NumberInput
+                label="Stop distance"
+                value={e.stop.value}
+                min={0.05}
+                max={95}
+                step={e.stop.unit === 'atr' ? 0.25 : 0.5}
+                onChange={(v) => edit((d) => (d.exits.stop.value = v))}
+              />
+              <Seg
+                label="Stop unit"
+                value={e.stop.unit}
+                options={UNIT_OPTS}
+                onChange={(v: DistUnit) => edit((d) => (d.exits.stop.unit = v))}
+              />
             </span>
           </div>
         ) : null}
@@ -562,8 +889,20 @@ function ExitsEditor({ s, edit }: { s: Strategy; edit: (fn: (d: Strategy) => voi
             <div className="field">
               <span className="label">Distance from best price</span>
               <span className="inline">
-                <NumberInput label="Trail distance" value={e.trail.value} min={0.05} max={95} step={e.trail.unit === 'atr' ? 0.25 : 0.5} onChange={(v) => edit((d) => (d.exits.trail.value = v))} />
-                <Seg label="Trail unit" value={e.trail.unit} options={UNIT_OPTS} onChange={(v: DistUnit) => edit((d) => (d.exits.trail.unit = v))} />
+                <NumberInput
+                  label="Trail distance"
+                  value={e.trail.value}
+                  min={0.05}
+                  max={95}
+                  step={e.trail.unit === 'atr' ? 0.25 : 0.5}
+                  onChange={(v) => edit((d) => (d.exits.trail.value = v))}
+                />
+                <Seg
+                  label="Trail unit"
+                  value={e.trail.unit}
+                  options={UNIT_OPTS}
+                  onChange={(v: DistUnit) => edit((d) => (d.exits.trail.unit = v))}
+                />
               </span>
             </div>
             <div className="field">
@@ -571,7 +910,14 @@ function ExitsEditor({ s, edit }: { s: Strategy; edit: (fn: (d: Strategy) => voi
                 Start after a gain of <span className="hint">0 = at once</span>
               </span>
               <span className="inline">
-                <NumberInput label="Activate after" value={e.trail.activate} min={0} max={500} step={0.5} onChange={(v) => edit((d) => (d.exits.trail.activate = v))} />
+                <NumberInput
+                  label="Activate after"
+                  value={e.trail.activate}
+                  min={0}
+                  max={500}
+                  step={0.5}
+                  onChange={(v) => edit((d) => (d.exits.trail.activate = v))}
+                />
                 <span className="unit">%</span>
               </span>
             </div>
@@ -588,16 +934,41 @@ function ExitsEditor({ s, edit }: { s: Strategy; edit: (fn: (d: Strategy) => voi
           <div className="ladder">
             {e.targets.levels.map((l, i) => (
               <div className="ladder-row" key={i}>
-                <NumberInput label={`Target ${i + 1} size`} value={l.size} min={1} max={100} width={58} onChange={(v) => edit((d) => (d.exits.targets.levels[i].size = v))} />
+                <NumberInput
+                  label={`Target ${i + 1} size`}
+                  value={l.size}
+                  min={1}
+                  max={100}
+                  width={58}
+                  onChange={(v) => edit((d) => (d.exits.targets.levels[i].size = v))}
+                />
                 <span>% at</span>
-                <NumberInput label={`Target ${i + 1} distance`} value={l.value} min={0.05} max={1000} step={0.25} width={62} onChange={(v) => edit((d) => (d.exits.targets.levels[i].value = v))} />
-                <select className="select" style={{ height: 30, fontSize: 12.5 }} aria-label="Target unit" value={l.unit} onChange={(ev) => edit((d) => (d.exits.targets.levels[i].unit = ev.target.value as 'pct' | 'atr' | 'r'))}>
+                <NumberInput
+                  label={`Target ${i + 1} distance`}
+                  value={l.value}
+                  min={0.05}
+                  max={1000}
+                  step={0.25}
+                  width={62}
+                  onChange={(v) => edit((d) => (d.exits.targets.levels[i].value = v))}
+                />
+                <select
+                  className="select"
+                  style={{ height: 30, fontSize: 12.5 }}
+                  aria-label="Target unit"
+                  value={l.unit}
+                  onChange={(ev) => edit((d) => (d.exits.targets.levels[i].unit = ev.target.value as 'pct' | 'atr' | 'r'))}
+                >
                   <option value="pct">%</option>
                   <option value="atr">× ATR</option>
                   <option value="r">R</option>
                 </select>
                 {e.targets.levels.length > 1 ? (
-                  <button className="icon-btn sm" aria-label="Remove target" onClick={() => edit((d) => d.exits.targets.levels.splice(i, 1))}>
+                  <button
+                    className="icon-btn sm"
+                    aria-label="Remove target"
+                    onClick={() => edit((d) => d.exits.targets.levels.splice(i, 1))}
+                  >
                     <Trash2 />
                   </button>
                 ) : null}
@@ -633,7 +1004,14 @@ function ExitsEditor({ s, edit }: { s: Strategy; edit: (fn: (d: Strategy) => voi
           <div className="field">
             <span className="label">After a gain of</span>
             <span className="inline">
-              <NumberInput label="Breakeven trigger" value={e.breakeven.value} min={0.1} max={100} step={0.25} onChange={(v) => edit((d) => (d.exits.breakeven.value = v))} />
+              <NumberInput
+                label="Breakeven trigger"
+                value={e.breakeven.value}
+                min={0.1}
+                max={100}
+                step={0.25}
+                onChange={(v) => edit((d) => (d.exits.breakeven.value = v))}
+              />
               <Seg
                 label="Breakeven unit"
                 value={e.breakeven.unit}
@@ -657,7 +1035,13 @@ function ExitsEditor({ s, edit }: { s: Strategy; edit: (fn: (d: Strategy) => voi
           <div className="field">
             <span className="label">Close after</span>
             <span className="inline">
-              <NumberInput label="Bars held" value={e.time.bars} min={1} max={5000} onChange={(v) => edit((d) => (d.exits.time.bars = v))} />
+              <NumberInput
+                label="Bars held"
+                value={e.time.bars}
+                min={1}
+                max={5000}
+                onChange={(v) => edit((d) => (d.exits.time.bars = v))}
+              />
               <span className="unit">bars</span>
             </span>
           </div>
@@ -701,14 +1085,29 @@ function SizingEditor({ s, edit }: { s: Strategy; edit: (fn: (d: Strategy) => vo
         <span className="label">{z.mode === 'equity' ? 'Use' : z.mode === 'risk' ? 'Risk (needs a stop loss)' : 'Amount'}</span>
         <span className="inline">
           {z.mode === 'cash' ? <span className="unit">$</span> : null}
-          <NumberInput label="Size" value={z.value} min={0.01} max={z.mode === 'cash' ? 1e9 : 1000} step={z.mode === 'risk' ? 0.25 : 5} onChange={(v) => edit((d) => (d.sizing.value = v))} width={z.mode === 'cash' ? 96 : undefined} />
+          <NumberInput
+            label="Size"
+            value={z.value}
+            min={0.01}
+            max={z.mode === 'cash' ? 1e9 : 1000}
+            step={z.mode === 'risk' ? 0.25 : 5}
+            onChange={(v) => edit((d) => (d.sizing.value = v))}
+            width={z.mode === 'cash' ? 96 : undefined}
+          />
           {z.mode !== 'cash' ? <span className="unit">%</span> : null}
         </span>
       </div>
       <div className="field">
         <span className="label">Leverage limit</span>
         <span className="inline">
-          <NumberInput label="Leverage" value={z.leverage} min={0.1} max={125} step={0.5} onChange={(v) => edit((d) => (d.sizing.leverage = v))} />
+          <NumberInput
+            label="Leverage"
+            value={z.leverage}
+            min={0.1}
+            max={125}
+            step={0.5}
+            onChange={(v) => edit((d) => (d.sizing.leverage = v))}
+          />
           <span className="unit">×</span>
         </span>
       </div>
@@ -722,15 +1121,32 @@ function SizingEditor({ s, edit }: { s: Strategy; edit: (fn: (d: Strategy) => vo
             <div className="field">
               <span className="label">Up to</span>
               <span className="inline">
-                <NumberInput label="Adds" value={z.scaleIn.max} min={1} max={10} onChange={(v) => edit((d) => (d.sizing.scaleIn.max = v))} />
+                <NumberInput
+                  label="Adds"
+                  value={z.scaleIn.max}
+                  min={1}
+                  max={10}
+                  onChange={(v) => edit((d) => (d.sizing.scaleIn.max = v))}
+                />
                 <span className="unit">adds of</span>
-                <NumberInput label="Add size" value={z.scaleIn.size} min={1} max={500} step={5} onChange={(v) => edit((d) => (d.sizing.scaleIn.size = v))} />
+                <NumberInput
+                  label="Add size"
+                  value={z.scaleIn.size}
+                  min={1}
+                  max={500}
+                  step={5}
+                  onChange={(v) => edit((d) => (d.sizing.scaleIn.size = v))}
+                />
                 <span className="unit">%</span>
               </span>
             </div>
             <div className="field">
               <span className="label">Only while in profit</span>
-              <Toggle label="Only in profit" on={z.scaleIn.onlyInProfit} onChange={(v) => edit((d) => (d.sizing.scaleIn.onlyInProfit = v))} />
+              <Toggle
+                label="Only in profit"
+                on={z.scaleIn.onlyInProfit}
+                onChange={(v) => edit((d) => (d.sizing.scaleIn.onlyInProfit = v))}
+              />
             </div>
           </>
         ) : null}
@@ -749,7 +1165,15 @@ function CostsEditor({ s, edit }: { s: Strategy; edit: (fn: (d: Strategy) => voi
         <span className="label">Starting capital</span>
         <span className="inline">
           <span className="unit">$</span>
-          <NumberInput label="Capital" value={s.costs.capital} min={100} max={1e10} step={1000} width={110} onChange={(v) => edit((d) => (d.costs.capital = v))} />
+          <NumberInput
+            label="Capital"
+            value={s.costs.capital}
+            min={100}
+            max={1e10}
+            step={1000}
+            width={110}
+            onChange={(v) => edit((d) => (d.costs.capital = v))}
+          />
         </span>
       </div>
       <div className="field">
@@ -762,7 +1186,14 @@ function CostsEditor({ s, edit }: { s: Strategy; edit: (fn: (d: Strategy) => voi
       <div className="field">
         <span className="label">Slippage per fill</span>
         <span className="inline">
-          <NumberInput label="Slippage" value={s.costs.slippagePct} min={0} max={5} step={0.01} onChange={(v) => edit((d) => (d.costs.slippagePct = v))} />
+          <NumberInput
+            label="Slippage"
+            value={s.costs.slippagePct}
+            min={0}
+            max={5}
+            step={0.01}
+            onChange={(v) => edit((d) => (d.costs.slippagePct = v))}
+          />
           <span className="unit">%</span>
         </span>
       </div>
