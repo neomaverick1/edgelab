@@ -156,6 +156,8 @@ export function operandLabel(o: Operand): string {
   if (o.id === 'price') base = (o.src ?? 'close').replace(/^\w/, (c) => c.toUpperCase());
   else if (o.id === 'pattern') base = outLabel;
   else if (o.id === 'donchian' && out !== 'mid') base = `${o.p[0]}-bar ${out === 'upper' ? 'high' : 'low'}`;
+  else if (o.id === 'smaatr' || o.id === 'emaatr')
+    base = `${o.id.slice(0, 3).toUpperCase()} ${o.p[0]} ${out === 'upper' ? '+' : '-'} ${formatNum(o.p[1])} ATR${o.p[2] !== 14 ? ` ${o.p[2]}` : ''}`;
   else base = [def.short, o.p.join('/'), def.outputs.length > 1 && out !== def.outputs[0].key ? outLabel.toLowerCase() : ''].filter(Boolean).join(' ');
   const src = def.source && o.src && o.src !== def.source && o.id !== 'price' ? ` of ${o.src}` : '';
   const ago = o.ago ? ` ${o.ago} bar${o.ago > 1 ? 's' : ''} ago` : '';

@@ -132,6 +132,18 @@ export function parseOperand(raw: string): Operand | null {
   if (!s) return null;
   if (new RegExp(`^${NUM}\\s*%?$`).test(s)) return num(parseFloat(s));
 
+  // "sma 25 - 1.5 atr", "25 ema plus 2 atr": a moving average shifted by ATR
+  const band = s.match(new RegExp(`^(.+?)\\s*(\\+|-|plus|minus)\\s*${NUM}\\s*(?:x\\s*)?(?:atr|average true range)(?:\\s*(\\d+))?$`));
+  if (band) {
+    const base = parseOperand(band[1]);
+    if (base?.kind === 'ind' && (base.id === 'sma' || base.id === 'ema'))
+      return ind(`${base.id}atr`, [base.p[0], +band[3], band[4] ? +band[4] : 14], {
+        out: band[2] === '+' || band[2] === 'plus' ? 'upper' : 'lower',
+        ...(base.src && base.src !== 'close' ? { src: base.src } : {}),
+      });
+    return null;
+  }
+
   let ago = 0;
   const agoM = s.match(/\s*,?\s*(\d+) (?:bars?|candles?|days?|periods?) ago$/);
   if (agoM) {
@@ -404,6 +416,15 @@ function condition(raw: string): Node | null {
   return null;
 }
 
+/** Drops brackets the read-back puts around groups, "(close crosses below sma 25)", but keeps "sma(25)". */
+function unwrap(p: string): string {
+  const count = (c: string) => p.split(c).length - 1;
+  while (p.startsWith('(') && count('(') > count(')')) p = p.slice(1).trim();
+  while (p.endsWith(')') && count(')') > count('(')) p = p.slice(0, -1).trim();
+  if (p.startsWith('(') && p.endsWith(')') && count('(') === 1 && count(')') === 1) p = p.slice(1, -1).trim();
+  return p;
+}
+
 /** Splits on "or" at the top and "and" inside, so "a and b or c" reads as (a and b) or c. */
 function conditions(text: string): { node: RuleGroup | null; unknown: string[] } {
   const unknown: string[] = [];
@@ -414,7 +435,7 @@ function conditions(text: string): { node: RuleGroup | null; unknown: string[] }
     // keep "between X and Y" together
     const safe = alt.replace(/between (-?[\d.]+) and (-?[\d.]+)/g, 'between $1 AND_ $2');
     for (const piece of safe.split(/\s+(?:and|&&|&|but|while|with|plus)\s+|\s*,\s*/)) {
-      const p = piece.replace('AND_', 'and').trim();
+      const p = unwrap(piece.replace('AND_', 'and').trim());
       if (!p) continue;
       const c = condition(p);
       if (c) items.push(c);
@@ -802,11 +823,108 @@ export function readPhrase(text: string): string | null {
 
 /** The text the reader works on, after typos and everyday wording are fixed. */
 export const prepareEnglish = (input: string, opts: ReadOptions = {}) =>
-  phrasebook(normalizeEnglish(byTrade(applyLearned(input.toLowerCase(), opts.learned), opts).text));
+  phrasebook(normalizeEnglish(byTrade(plainSides(applyLearned(input.toLowerCase(), opts.learned)), opts).text));
 
 export function readCondition(text: string): string | null {
   const r = parseEnglish(`Buy when ${text}.`);
   return r.unknown.length || !r.strategy.longEntry.items.length ? null : describeGroup(r.strategy.longEntry);
+}
+
+// How people describe a strategy in their own words, turned into the reader's forms before anything else:
+//   "Buy side: when a candle closes above the 25-period moving average, it buys. It sells to close when a candle
+//    closes back below the average, or when price drops 1.5 ATR below the average. Sell side: …"
+// - "the 25-period moving average" is the 25 SMA, and "the average" later on means that same one
+// - "Buy side:" / "Long side:" / "For shorts:" say which trade the next sentences are about
+// - "when X, it buys" and "it buys when X" are entries; "it sells to close when X", "it closes the trade when X" exits
+// - "price drops 1.5 ATR below the average" is a level: the average minus 1.5 ATR
+const SUBJ = '(?:(?:it|we|i|you|the (?:bot|ea|algo|algorithm|strategy|system|robot|trader))\\s+)?(?:(?:will|should|would|then)\\s+)?';
+const LONG_IN = '(?:buys?|buying|goes long|go long|enters? (?:a )?long(?: trade| position)?|opens? (?:a )?long(?: trade| position)?)';
+const SHORT_IN = '(?:sells?(?! to close)|selling|shorts?|goes short|go short|sells? short|enters? (?:a )?short(?: trade| position)?|opens? (?:a )?short(?: trade| position)?)';
+const LONG_OUT = '(?:sells? to close|sells? (?:it|the position|the trade|the buy|out)|closes? (?:the |its |my )?(?:buy|long))';
+const SHORT_OUT = '(?:buys? to close|buys? (?:it )?back|covers?(?: the short)?|closes? (?:the |its |my )?(?:sell|short))';
+const ANY_OUT = '(?:closes? (?:out )?(?:the |this |its |my )?(?:trade|position)|closes? (?:it|out)|exits?(?: (?:the |this |its |my )?(?:trade|position))?|gets? out|stops? out)';
+const WHEN = '(?:when|if|once|as soon as|whenever)';
+
+function plainSides(input: string): string {
+  // Averages named with a period, then "the average" = the last one named.
+  const MA: Record<string, string> = { simple: 'sma', exponential: 'ema', weighted: 'wma', '': 'sma' };
+  let t = input
+    .replace(
+      /\b(\d+)(?:[- ](?:period|day|bar|candle|hour|minute|week)s?)?[- ](?:(simple|exponential|weighted) )?(?:moving average|ma)\b/g,
+      (_m, n: string, kind = '') => `${MA[kind]} ${n}`,
+    )
+    .replace(/\b(?:(simple|exponential|weighted) )?moving average (?:of |over )?(?:the )?(?:last )?(\d+)(?: (?:periods?|days?|bars?|candles?))?\b/g, (_m, kind = '', n: string) => `${MA[kind]} ${n}`)
+    .replace(/\b(?:closes|closed|closing|moves|goes|gets|crosses) back (above|below|over|under)\b/g, 'closes $1')
+    .replace(/\b(\d+)[- ]?(?:(?:period|day|bar|candle|hour)s?[- ])?(sma|ema|wma|hma)\b/g, '$2 $1');
+  let last = '';
+  t = t.replace(
+    /\b(?:sma|ema|wma|hma) \d+\b|\bthe (?:moving )?average(?! true)\b|\bthe (?:ma|mean|average line|moving average line)\b|\bthe (?:sma|ema|wma|hma)\b(?! ?\d)/g,
+    (m) => {
+      if (/^(?:sma|ema|wma|hma) /.test(m)) {
+        last = m;
+        return m;
+      }
+      // "the ema" after "the 20 ema": that one; "the average": the last average named
+      const kind = m.match(/\b(sma|ema|wma|hma)$/)?.[1];
+      if (kind && !last.startsWith(kind)) return m;
+      return last || m;
+    },
+  );
+  // "price drops 1.5 atr below the sma 25" -> a level the price is below
+  t = t.replace(
+    /\b(?:the )?(?:price|close|it|candle|a candle|the candle|market)\s+(?:drops|falls|moves|goes|gets|trades|closes|is|dips|sinks|slips|rises|climbs|pushes|runs|jumps|pops|extends)\s+(?:to |by |more than |over )?(\d+(?:\.\d+)?)\s*(?:x|times)?\s*(?:the )?(?:atrs?|average true ranges?)\s+(below|under|above|over|past|beyond)\s+((?:sma|ema) \d+)/g,
+    (_m, k: string, dir: string, ma: string) => {
+      const down = /below|under/.test(dir) || (/past|beyond/.test(dir) && /drops|falls|dips|sinks|slips/.test(_m));
+      return `close is ${down ? 'below' : 'above'} ${ma} ${down ? '-' : '+'} ${k} atr`;
+    },
+  );
+
+  // Sentences, with the side each one is about.
+  const sentences = t.split(/(?<=[.!?;])\s+|\n+/).map((x) => x.trim());
+  let side: 'long' | 'short' | null = null;
+  const HEAD =
+    /^(?:(?:on |for )?(?:the )?(buy|long|sell|short)(?:ing)?[- ]side|(?:for |on )?(longs|shorts|long trades|short trades|buys|sells|buying|selling|shorting|going long|going short))\s*[:,-]?\s*/;
+  return sentences
+    .map((raw) => {
+      let x = raw;
+      const h = x.match(HEAD);
+      if (h && (h[1] || /[:,-]\s*$/.test(h[0]) || h[0].trim() !== x.trim())) {
+        const w = h[1] ?? h[2];
+        side = /^(?:buy|long|going long)/.test(w) ? 'long' : 'short';
+        x = x.slice(h[0].length);
+      }
+      const end = x.match(/[.!?;]+$/)?.[0] ?? '';
+      x = x.slice(0, x.length - end.length);
+      const longIn = side === 'short' ? 'cover' : 'buy';
+      const shortIn = side === 'long' ? 'exit long' : side === 'short' ? 'short' : 'sell';
+      const anyOut = side === 'short' ? 'cover' : side === 'long' ? 'exit long' : null;
+      const verb = (v: string) =>
+        new RegExp(`^${LONG_OUT}$`).test(v)
+          ? 'exit long'
+          : new RegExp(`^${SHORT_OUT}$`).test(v)
+            ? 'cover'
+            : new RegExp(`^${ANY_OUT}$`).test(v)
+              ? anyOut
+              : new RegExp(`^${LONG_IN}$`).test(v)
+                ? longIn
+                : /short/.test(v)
+                  ? 'short' // "short" always opens a short; only a plain "sell" depends on the side being described
+                  : shortIn;
+      const ACT = `(${LONG_OUT}|${SHORT_OUT}|${ANY_OUT}|${LONG_IN}|${SHORT_IN})`;
+      // "when X, it buys" / "if X then we go short"
+      x = x.replace(new RegExp(`(^|,\\s*)${WHEN}\\s+(.+?),?\\s+${SUBJ}${ACT}$`), (m, pre: string, cond: string, v: string) => {
+        const to = verb(v);
+        return to ? `${pre}${to} when ${cond}` : m;
+      });
+      // "it buys when X" / "it sells to close when X" / "the bot closes the trade if X"
+      x = x.replace(new RegExp(`(^|,\\s*|\\band\\s+)${SUBJ}${ACT}\\s+${WHEN}\\b`, 'g'), (m, pre: string, v: string) => {
+        const to = verb(v);
+        return to ? `${pre}${to} when` : m;
+      });
+      return x + end;
+    })
+    .filter((x) => /[a-z]/.test(x))
+    .join(' ');
 }
 
 // Reads a strategy one sentence at a time, keeping track of which trade each sentence is about, so an exit said after
@@ -912,7 +1030,7 @@ export function parseEnglish(input: string, base?: Strategy, opts: ReadOptions =
   const understood: string[] = [];
   const unknown: string[] = [];
 
-  const shaped = byTrade(applyLearned(input.toLowerCase(), opts.learned), opts);
+  const shaped = byTrade(plainSides(applyLearned(input.toLowerCase(), opts.learned)), opts);
   let text = phrasebook(normalizeEnglish(shaped.text));
   text = extractRisk(text, s, understood);
 

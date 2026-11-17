@@ -472,6 +472,31 @@ export const INDICATORS: IndicatorDef[] = [
       out: { upper: `(${v}m + ${m} * ${v}a)`, mid: `${v}m`, lower: `(${v}m - ${m} * ${v}a)` },
     }),
   },
+  // "price drops 1.5 ATR below the 25 SMA": a moving average shifted by a multiple of ATR
+  ...(['sma', 'ema'] as const).map(
+    (ma): IndicatorDef => ({
+      id: `${ma}atr`,
+      name: `${ma.toUpperCase()} ± ATR`,
+      short: `${ma.toUpperCase()} ± ATR`,
+      group: 'Volatility',
+      params: [len(20), mult('ATR multiple', 1.5, 0.1, 10), n('ATR length', 14, 1, 200)],
+      outputs: [
+        { key: 'lower', label: 'Lower' },
+        { key: 'upper', label: 'Upper' },
+      ],
+      source: 'close',
+      place: 'overlay',
+      compute: (d, [k, m, a], src) => {
+        const mid = ma === 'sma' ? ta.sma(src, k) : ta.ema(src, k);
+        const r = ta.atr(d.high, d.low, d.close, a);
+        return { lower: mid.map((x, i) => x - m * r[i]), upper: mid.map((x, i) => x + m * r[i]) };
+      },
+      pine: ([k, m, a], src, v) => ({
+        lines: [`${v}m = ta.${ma}(${src}, ${k})`, `${v}a = ta.atr(${a})`],
+        out: { lower: `(${v}m - ${m} * ${v}a)`, upper: `(${v}m + ${m} * ${v}a)` },
+      }),
+    }),
+  ),
   {
     id: 'donchian',
     name: 'Donchian channel (prior bars)',
